@@ -1,0 +1,9 @@
+/siwc-provider
+*.exe
+*.test
+.env
+.env.*
+state.json
+*.pem
+*.key
+.DS_Store
