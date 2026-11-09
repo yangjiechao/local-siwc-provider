@@ -1,9 +1,14 @@
-/siwc-provider
-*.exe
-*.test
+# Secrets and local runtime state
+state.json
+*.token
 .env
 .env.*
-state.json
-*.pem
 *.key
+*.pem
+
+# Build outputs
+bin/
+dist/
+*.exe
+*.test
 .DS_Store

@@ -1,0 +1,94 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+)
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <login|status|key|serve|logout> [options]\nCommands:\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show current authorization status\n  key     Display the local API key (keep private)\n  serve   Start localhost OpenAI-compatible API; --port 8787\n  logout  Revoke current renewable session")
+}
+func run() error {
+	if len(os.Args) < 2 {
+		usage()
+		return fmt.Errorf("missing command")
+	}
+	path := os.Getenv("SIWC_STATE_FILE")
+	store, err := newStore(path)
+	if err != nil {
+		return err
+	}
+	auth := newAuth(store)
+	switch os.Args[1] {
+	case "login":
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		if err := auth.login(ctx); err != nil {
+			return err
+		}
+		fmt.Println("OAuth authorization validated and saved locally")
+	case "status":
+		s := store.get()
+		if s.Credential == nil || s.Credential.AccessToken == "" {
+			fmt.Println("Signed in: no")
+		} else {
+			fmt.Printf("Signed in: yes\nAccount: %s\nClient: %s\nAccess token expires: %s\n", s.Credential.Email, s.Credential.ClientID, s.Credential.ExpiresAt.Format(time.RFC3339))
+		}
+	case "key":
+		fmt.Println("This is a localhost-only secret; do not commit or share:")
+		fmt.Println(store.get().LocalKey)
+	case "logout":
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := auth.logout(ctx); err != nil {
+			return err
+		}
+		fmt.Println("Session revoked and credentials cleared")
+	case "serve":
+		flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+		port := flags.Int("port", 8787, "localhost TCP port")
+		if err := flags.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if *port < 1 || *port > 65535 {
+			return fmt.Errorf("invalid port")
+		}
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*port))
+		listener, err := net.Listen("tcp4", addr)
+		if err != nil {
+			return err
+		}
+		server := &http.Server{Handler: newServer(auth).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go func() {
+			<-stopCtx.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+		log.Printf("SIWC Provider listening at http://%s/v1 (localhost only)", addr)
+		err = server.Serve(listener)
+		if err != http.ErrServerClosed {
+			return err
+		}
+	default:
+		usage()
+		return fmt.Errorf("unknown command %q", os.Args[1])
+	}
+	return nil
+}
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
