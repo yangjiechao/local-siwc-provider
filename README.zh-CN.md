@@ -7,7 +7,7 @@
 - **ChatGPT 登录**：点击按钮打开 OpenAI 官方 OAuth 授权页面，无需输入密码到 Provider；授权成功后显示账号和 Token 到期时间。
 - **启动 / 停止 Agent API**：一个按钮控制 Agent 接口，网页管理界面始终保持运行。
 - **查看 / 复制本地 API Key**：只有解锁的本地控制台才能获取，默认隐藏。**它不是 ChatGPT Token**。
-- **查询 / 选择 / 复制可用模型**：直接列出当前账号的全部模型 ID，支持搜索、单个复制、复制全部和选用模型。
+- **查询 / 搜索 / 复制可用模型**：页面列出当前账号返回的全部模型 ID，支持搜索、单个复制、复制全部、选用模型，不预设可用模型。
 - **复制 Agent 配置**：包含 base_url、本地 Key 和所选模型 ID。
 
 ## macOS 首次使用：双击启动
@@ -18,7 +18,7 @@
    git clone https://github.com/yangjiechao/local-siwc-provider.git
    ```
 3. 在 Finder 中进入项目目录，双击 **`start.command`**。第一次可能需要右键 → 打开（允许从互联网获取的脚本）。
-4. 程序自动编译并打开本地控制台。依次点击“使用 ChatGPT 登录”、“启动 API 服务”、“复制本地 Key”和“刷新模型列表”。
+4. 程序自动编译并打开本地控制台。依次点击“使用 ChatGPT 登录”、“启动 API 服务”、“复制本地 Key”和“刷新模型列表”。刷新后可在下方“当前账号的可用模型”逐项查看完整模型 ID，点击“复制”或“复制全部模型 ID”；点击“选用”也会更新 Agent 配置中的模型下拉框。
 5. 保持 Terminal 窗口打开；关闭或停止该进程，会同时停止控制台和 API。
 
 如果双击脚本没有执行权限，可以在终端运行：
@@ -67,3 +67,22 @@ go build -o siwc-provider .
 如果网页已关闭但后端仍在运行，在**同一个浏览器、会话未过期**的情况下可以重新打开本地地址。否则请先停止旧进程，再重新运行 `ui` 解锁。
 
 官方参考文档：[SIWC Quickstart](https://developers.openai.com/siwc/quickstart)、[Registration](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)、[Models & Inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)。
+
+
+## 网页检查更新（GitHub main）
+
+在管理页面的 **“检查更新”** 区域，可查看本地版本、GitHub 最新提交、检查时间和更新状态。
+点击“检查 GitHub 更新”时，程序查询 GitHub 官方仓库的 `main` 分支，比较 Git 提交先后关系；发现确实领先于本地的版本后，按钮才会启用。当前仓库尚未采用稳定版 Release 标签，因此这里的“版本”是 **Git 提交号**，并非商用软件的语义化版本号。
+
+**一键更新的要求与流程：**
+
+- 仅支持 GitHub 克隆下来的源码目录，使用 `start.command` 启动并由 Go 编译的 `siwc-provider`。需安装 Git 和 Go 1.23+。直接 `go run .` 或下载单个未标记构建提交的二进制文件，不能安全地一键更新。
+- 必须在本仓库官方 `origin` 的 **main** 分支，且工作目录没有未提交修改；本地提交与正在运行的二进制必须匹配。若分支分叉、主机无法连接 GitHub，或存在本地修改，只展示原因，不会强行覆盖。
+- 更新时先 `git fetch`，验证新版本是旧版本的快进后，在临时 Git worktree 中运行 `go test ./...`、编译 Go 程序；测试或编译失败不会替换当前程序。
+- 测试成功后快进源码，备份旧二进制为 `siwc-provider.previous`，安装新程序并重启服务。浏览器会再次打开本地管理页面；正在执行的 Agent 请求可能中断。
+- OAuth 账号、API Key、端口和局域网配置保留在用户目录 `~/.config/local-siwc-provider/state.json`，不会因源码更新被清除。
+- 自动更新仅在 **本机控制台的授权会话** 操作，局域网 Agent API 不提供更新功能。此功能不可用于公网暴露的网页管理系统。Windows 运行中替换可执行文件暂不支持。
+
+首次获得此功能，需要先手动运行一次 `git pull origin main`，再双击 `start.command`，让本地二进制包含对应提交号。以后可在网页中检查和安装新版本。
+
+若 GitHub 发布了新提交但你本地已经修改过源码，可以先 `git status` 检查，并自行处理修改后再使用更新功能。不要通过强制重置覆盖自己的代码。

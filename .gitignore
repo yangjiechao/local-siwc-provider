@@ -15,3 +15,10 @@ dist/
 
 # Local compiled binary
 /siwc-provider
+
+# Local auto-updater binaries
+/.siwc-provider.new
+/siwc-provider.previous
+
+# go build . output
+/local-siwc-provider

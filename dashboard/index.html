@@ -61,21 +61,35 @@
         <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
           <div class="info-box"><div class="info-label">模型目录</div><strong id="modelCount">尚未查询</strong><small id="modelDetail">登录后点击刷新。</small></div>
           <button type="button" id="refreshModelsBtn" class="btn outline" disabled>刷新模型列表 <span>↻</span></button>
-          <span class="subline">会直接请求 OpenAI 的模型目录，完整模型 ID 在下方显示。</span>
+          <span class="subline">会直接请求 OpenAI 的模型目录，具体模型 ID 在下方完整列出。</span>
         </section>
       </div>
 
-
       <section class="panel model-directory" aria-labelledby="modelDirectoryTitle">
         <div class="section-header model-directory-header">
-          <div><div class="overline">MODEL CATALOG</div><h2 id="modelDirectoryTitle">当前账号的可用模型</h2><p class="subheading">模型的完整 ID 会显示在这里，可搜索、选用、单独复制或一次复制全部。</p></div>
+          <div><div class="overline">MODEL CATALOG</div><h2 id="modelDirectoryTitle">当前账号的可用模型</h2><p class="subheading">这里会显示模型的完整 ID，可以单独复制、选用，或一次复制全部模型 ID。</p></div>
           <div class="model-directory-actions">
-            <label for="modelSearch"><span class="visually-hidden">搜索模型 ID</span><input id="modelSearch" class="text-field" type="search" placeholder="搜索模型 ID" autocomplete="off" disabled></label>
+            <label class="model-search-label" for="modelSearch"><span class="visually-hidden">筛选模型名称</span><input class="text-field" id="modelSearch" type="search" placeholder="搜索模型 ID" autocomplete="off" disabled></label>
             <button id="copyAllModelsBtn" type="button" class="btn outline" disabled>复制全部模型 ID ⧉</button>
           </div>
         </div>
-        <p id="modelListHint" class="model-list-hint" role="status" aria-live="polite">点击上方“刷新模型列表”后显示完整模型 ID。</p>
-        <ul id="modelRows" class="model-list" aria-label="可用模型列表"></ul>
+        <p id="modelListHint" class="model-list-hint" role="status" aria-live="polite">点击上方“刷新模型列表”后，这里将显示全部可用模型。</p>
+        <ul id="modelRows" class="model-list" aria-label="可用模型 ID 列表"></ul>
+      </section>
+
+      <section class="panel update-panel" aria-labelledby="updateTitle">
+        <div class="section-header"><div><div class="overline">VERSION &amp; UPDATES</div><h2 id="updateTitle">检查更新</h2><p class="subheading">比较当前程序与 GitHub main 分支的提交版本。更新前会检查工作区并在隔离目录完成测试和编译。</p></div><span id="updateBadge" class="tag">尚未检查</span></div>
+        <div class="update-version-grid">
+          <div class="update-version"><span>本地版本</span><strong id="localVersion">读取中…</strong><small id="localCommit">—</small></div>
+          <div class="update-version"><span>GitHub 最新版本</span><strong id="githubVersion">尚未检查</strong><small id="githubDate">—</small></div>
+        </div>
+        <div class="update-toolbar">
+          <button id="checkUpdateBtn" class="btn outline" type="button">检查 GitHub 更新 ↻</button>
+          <button id="applyUpdateBtn" class="btn dark" type="button" disabled>更新到最新版 ↗</button>
+          <a class="update-history" href="https://github.com/yangjiechao/local-siwc-provider/commits/main" target="_blank" rel="noopener noreferrer">查看提交历史 ↗</a>
+        </div>
+        <p id="updateMessage" class="update-message" role="status" aria-live="polite">点击检查更新，查看 GitHub 最新源码版本。</p>
+        <p class="security-hint">仅在官方仓库的干净 main 分支上提供一键更新。需要 Git 和 Go；更新会中断正在运行的 Agent 请求，但不会清除保存在本机的账号、端口或 API Key。</p>
       </section>
 
       <section class="panel network-panel" aria-labelledby="networkTitle">

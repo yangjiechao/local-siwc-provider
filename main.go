@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -20,15 +22,16 @@ type lifecycleAction string
 const (
 	lifecycleRestart lifecycleAction = "restart"
 	lifecycleQuit    lifecycleAction = "quit"
+	lifecycleUpgrade lifecycleAction = "upgrade"
 )
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <ui|login|status|key|serve|logout> [options]\nCommands:\n  ui      Open local dashboard (default dashboard port 8787, Agent API port 8087)\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show authorization status\n  key     Display the Agent API key (keep private)\n  serve   Start dashboard + Agent API; --port overrides Agent API port\n  logout  Revoke current renewable session")
 }
 
-func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (bool, error) {
+func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (lifecycleAction, error) {
 	if adminPort < 1 || adminPort > 65535 {
-		return false, fmt.Errorf("invalid dashboard port %d", adminPort)
+		return lifecycleQuit, fmt.Errorf("invalid dashboard port %d", adminPort)
 	}
 	store := auth.store
 	service := newServer(auth)
@@ -39,12 +42,13 @@ func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (bool, e
 	dash.runtime = api
 	dash.adminPort = adminPort
 	dash.control = done
+	dash.updater = newUpdateManager(done)
 	service.dashboard = dash
 
 	adminAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(adminPort))
 	adminListener, err := net.Listen("tcp4", adminAddr)
 	if err != nil {
-		return false, fmt.Errorf("dashboard port %d unavailable: %w", adminPort, err)
+		return lifecycleQuit, fmt.Errorf("dashboard port %d unavailable: %w", adminPort, err)
 	}
 	defer adminListener.Close()
 	adminSrv := &http.Server{Handler: service.AdminHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
@@ -52,7 +56,7 @@ func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (bool, e
 	if mode == "serve" && cliAPIPort > 0 {
 		current := store.get()
 		if err = api.Configure(cliAPIPort, current.LANEnabled); err != nil {
-			return false, err
+			return lifecycleQuit, err
 		}
 	}
 	if mode == "serve" || store.get().APIEnabled {
@@ -95,7 +99,7 @@ func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (bool, e
 	if err := adminSrv.Shutdown(ctx); err != nil {
 		_ = adminSrv.Close()
 	}
-	return action == lifecycleRestart, nil
+	return action, nil
 }
 
 func run() error {
@@ -154,12 +158,33 @@ func run() error {
 			*cliPort = 0
 		}
 		for {
-			restart, err := runServers(auth, os.Args[1], *adminPort, *cliPort)
+			action, err := runServers(auth, os.Args[1], *adminPort, *cliPort)
 			if err != nil {
 				return err
 			}
-			if !restart {
+			if action == lifecycleQuit {
 				return nil
+			}
+			if action == lifecycleUpgrade {
+				executable, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				executable, err = filepath.EvalSymlinks(executable)
+				if err != nil {
+					return err
+				}
+				// Keep the Terminal window attached while the newly compiled
+				// executable takes over the dashboard and API.
+				child := exec.Command(executable, "ui", "--dashboard-port", strconv.Itoa(*adminPort))
+				child.Dir = filepath.Dir(executable)
+				child.Stdin = os.Stdin
+				child.Stdout = os.Stdout
+				child.Stderr = os.Stderr
+				if err := child.Start(); err != nil {
+					return fmt.Errorf("launch updated binary: %w", err)
+				}
+				return child.Wait()
 			}
 			// After a restart, read saved settings instead of reapplying --port.
 			*cliPort = 0

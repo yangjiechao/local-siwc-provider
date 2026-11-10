@@ -14,7 +14,7 @@ An **experimental**, single-user, locally administered Go adapter for [Sign in w
 - OAuth authorization code with PKCE S256, `state`, `nonce`, issued `client_id`, and **ID token RS256/JWKS verification**.
 - Protected local state file (`0600`) with a stable per-host identifier, OAuth credentials, and a randomly generated Agent API key that can be replaced manually through the dashboard.
 - Automatic serialized refresh of an expiring OAuth access token (one running process per state file).
-- `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list. The dashboard displays all model IDs with filtering, selection, individual copy, and copy-all actions.
+- `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list. The dashboard displays the full returned model IDs, supports filtering, selecting, copying individually, or copying all IDs as newline-separated text.
 - `POST /v1/responses`: forwards supported requests; always enforces upstream `store:false` and `stream:true`. Supports streaming downstream or aggregation for non-stream callers.
 - `POST /v1/chat/completions`: **limited** compatibility layer for text, image URLs, function tools in a `namespace`, tool results, and streaming or aggregated results.
 - Only `api.openai.com/v1/models`, `api.openai.com/v1/responses`, and `auth.openai.com` OAuth/OIDC endpoints are called.
@@ -134,3 +134,14 @@ The adapter always sends `store:false,stream:true` to the upstream SIWC route. I
 ## License
 
 MIT. This is a community project, not affiliated with or endorsed by OpenAI.
+
+
+## Dashboard auto-update (rolling main-branch builds)
+
+The **Check for updates** panel displays the running binary's embedded source commit and GitHub's current `main` commit. This repository currently tracks commit IDs rather than stable semver releases. Comparison uses GitHub's commit ancestry API and enables one-click updates only when `main` is ahead of the running build.
+
+One-click updates require an official Git clone with a clean `main` branch, the exact locally built `siwc-provider` binary in the repository root, and installed Git and Go 1.23+. `start.command` embeds the Git SHA into builds, enabling reliable version comparisons. `go run`, custom/forked remotes, dirty or diverged branches, unknown binary revisions, standalone binaries, and Windows currently **do not** support automatic executable replacement.
+
+On update, the app fetches from the pinned project GitHub origin, verifies fast-forward ancestry, creates a temporary Git worktree, runs `go test ./...` and `go build` in the worktree, then fast-forwards the main checkout, replaces the binary with a backup (`siwc-provider.previous`), and restarts the application. Failed tests/builds do not replace the current executable. Updating will interrupt active Agent requests. OAuth credentials and API settings in the protected state directory are not modified. The update endpoint is available only from the authenticated loopback dashboard, never from the LAN-facing Agent API.
+
+For the first update to a version that contains this feature, run `git pull origin main` and launch `start.command` once to compile a binary with its source commit embedded. Future upgrades can be managed from the dashboard. You should still review source changes before installing any downloaded code, especially in security-sensitive installations.

@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 needs_build=false
 if [[ ! -x ./siwc-provider ]]; then
   needs_build=true
-elif command -v go >/dev/null 2>&1 && find . -type f \( -name '*.go' -o -name '*.html' -o -name '*.js' -o -name '*.css' \) -newer ./siwc-provider | grep -q .; then
+elif command -v go >/dev/null 2>&1 && [[ -d .git ]]; then
+  # Rebuild with its exact source commit to make local/remote comparison accurate.
   needs_build=true
 fi
 if [[ "$needs_build" == true ]]; then
@@ -15,7 +16,15 @@ if [[ "$needs_build" == true ]]; then
     exit 1
   fi
   echo "Building Local SIWC Provider..."
-  go build -o siwc-provider .
+  commit=""
+  if command -v git >/dev/null 2>&1 && [[ -d .git ]]; then
+    commit="$(git rev-parse HEAD)"
+  fi
+  if [[ -n "$commit" ]]; then
+    go build -ldflags="-X main.buildCommit=${commit}" -o siwc-provider .
+  else
+    go build -o siwc-provider .
+  fi
 fi
 printf '\nLocal SIWC Provider is starting...\nKeep this Terminal window open while you use the dashboard.\n'
 ./siwc-provider ui --dashboard-port 8787

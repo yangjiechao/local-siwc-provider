@@ -6,6 +6,8 @@ let status = null;
 let keyCache = null;
 let keyShown = false;
 let modelList = [];
+let modelsLoaded = false;
+let updateInfo = null;
 let busy = false;
 let toastTimer;
 const base = 'http://127.0.0.1:8087/v1';
@@ -43,6 +45,10 @@ async function unlock() {
     await fetchStatus();
     $('lockScreen').hidden = true;
     $('content').hidden = false;
+    // Show the last known version immediately; GitHub check happens separately.
+    // Version checking must never block the rest of the dashboard.
+    refreshUpdateStatus().then(() => checkUpdates())
+      .catch(err => toast(`检查更新失败：${err.message}`));
   } catch (_) { lock(); }
 }
 async function fetchStatus() {
@@ -102,7 +108,7 @@ $('logoutBtn').addEventListener('click', () => {
   if (!confirm('确定退出 ChatGPT 授权？本机 API 服务将停止。')) return;
   perform('退出登录', async () => {
     await call('logout', {method:'POST', body:{}});
-    modelList = []; updateModels(); keyCache = null;
+    modelList = []; modelsLoaded = false; updateModels(); keyCache = null;
     await fetchStatus(); toast('已退出当前 ChatGPT 授权');
   });
 });
@@ -138,71 +144,88 @@ $('saveKeyBtn').addEventListener('click', () => perform('保存 Key', async () =
   toast('已保存新 Key。请更新所有 Agent 的 API Key 配置');
 }));
 function renderModelRows() {
-  const rows = $('modelRows');
-  rows.replaceChildren();
-  const query = $('modelSearch').value.trim().toLowerCase();
-  const matches = modelList.filter(id => id.toLowerCase().includes(query));
-  $('modelSearch').disabled = modelList.length === 0;
-  $('copyAllModelsBtn').disabled = modelList.length === 0;
-  $('modelListHint').textContent = modelList.length
-    ? (query ? '匹配 ' + matches.length + ' / ' + modelList.length + ' 个模型' : '已显示全部 ' + modelList.length + ' 个模型 ID')
-    : '尚未查询到模型。请点击上方“刷新模型列表”。';
-  for (const id of matches) {
-    const li = document.createElement('li');
-    li.className = 'model-entry';
+  const list = $('modelRows');
+  list.replaceChildren();
+  const query = $('modelSearch').value.trim().toLocaleLowerCase();
+  const filtered = modelList.filter(id => id.toLocaleLowerCase().includes(query));
+  const hint = $('modelListHint');
+  if (!modelsLoaded) {
+    hint.textContent = '点击上方“刷新模型列表”后，这里将显示全部可用模型。';
+    return;
+  }
+  if (!modelList.length) {
+    hint.textContent = '当前授权账号没有返回可列出的模型。';
+    return;
+  }
+  hint.textContent = query ? `显示 ${filtered.length} / ${modelList.length} 个匹配模型` : `已获取 ${modelList.length} 个模型，点击“复制”获取完整 ID。`;
+  if (!filtered.length) {
+    const empty = document.createElement('li');
+    empty.className = 'model-empty';
+    empty.textContent = '没有匹配的模型，请尝试其他关键词。';
+    list.append(empty);
+    return;
+  }
+  for (const id of filtered) {
+    const row = document.createElement('li');
+    row.className = 'model-entry';
     const code = document.createElement('code');
-    code.textContent = id;
+    code.textContent = id; // Never interpolate upstream model names as HTML.
     code.title = id;
     const actions = document.createElement('div');
     actions.className = 'model-entry-actions';
-    const use = document.createElement('button');
-    use.type = 'button';
-    use.className = 'model-action';
-    use.textContent = $('modelSelect').value === id ? '已选用' : '选用';
-    use.disabled = $('modelSelect').value === id;
-    use.addEventListener('click', () => {
+    const select = document.createElement('button');
+    select.type = 'button';
+    select.className = 'model-action';
+    select.textContent = $('modelSelect').value === id ? '已选用' : '选用';
+    select.disabled = $('modelSelect').value === id;
+    select.setAttribute('aria-label', `选用模型 ${id}`);
+    select.addEventListener('click', () => {
       $('modelSelect').value = id;
       renderModelRows();
-      toast('已选用模型：' + id);
+      toast(`已选择模型：${id}`);
     });
     const copy = document.createElement('button');
     copy.type = 'button';
-    copy.className = 'model-action';
+    copy.className = 'model-action copy-model';
     copy.textContent = '复制 ⧉';
-    copy.setAttribute('aria-label', '复制模型 ID ' + id);
+    copy.setAttribute('aria-label', `复制模型 ID ${id}`);
     copy.addEventListener('click', () => perform('复制模型', () => copyText(id)));
-    actions.append(use, copy);
-    li.append(code, actions);
-    rows.append(li);
+    actions.append(select, copy);
+    row.append(code, actions);
+    list.append(row);
   }
-  if (modelList.length && !matches.length) {
-    const empty = document.createElement('li');
-    empty.className = 'model-empty';
-    empty.textContent = '没有找到匹配的模型';
-    rows.append(empty);
+}
+function updateModels() {
+  $('modelCount').textContent = !modelsLoaded ? '尚未查询' : modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
+  $('modelDetail').textContent = !modelsLoaded ? '登录后点击刷新。' : modelList.length ? '完整模型 ID 已在下方列出。' : '请确认账号的模型使用资格。';
+  const sel = $('modelSelect'), chosen = sel.value;
+  sel.replaceChildren();
+  if (modelList.length === 0) sel.add(new Option('请先查询模型目录',''));
+  else {
+    for (const item of modelList) sel.add(new Option(item,item));
+    if (modelList.includes(chosen)) sel.value = chosen;
   }
+  $('modelSearch').disabled = !modelsLoaded || modelList.length === 0;
+  $('copyAllModelsBtn').disabled = !modelList.length;
+  renderModelRows();
 }
 $('modelSearch').addEventListener('input', renderModelRows);
 $('modelSelect').addEventListener('change', renderModelRows);
-$('copyAllModelsBtn').addEventListener('click', () => perform('复制全部模型', () => copyText(modelList.join('\n'))));
-
-function updateModels() {
-  $('modelCount').textContent = modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
-  $('modelDetail').textContent = modelList.length ? '从当前授权账号实时返回。' : '请确认账号的模型使用资格。';
-  const sel = $('modelSelect'), chosen = sel.value;
-  sel.replaceChildren();
-  if (modelList.length === 0) {const o=new Option('请先查询模型目录','');sel.add(o);renderModelRows();return;}
-  for (const item of modelList) sel.add(new Option(item,item));
-  if (modelList.includes(chosen)) sel.value = chosen;
-  renderModelRows();
-}
+$('copyAllModelsBtn').addEventListener('click', () => perform('复制模型列表', () => copyText(modelList.join('\n'))));
 $('refreshModelsBtn').addEventListener('click', () => perform('查询模型', async () => {
   $('modelCount').textContent = '查询中…';
+  $('modelListHint').textContent = '正在从 OpenAI 查询模型目录…';
   try {
     const result = await call('models');
-    modelList = Array.isArray(result.models) ? result.models : [];
+    modelList = Array.isArray(result.models) ? result.models.filter(id => typeof id === 'string' && id.length > 0) : [];
+    modelsLoaded = true;
     updateModels(); toast(`查询完成：${modelList.length} 个模型`);
-  } catch(err) { $('modelCount').textContent='查询失败'; $('modelDetail').textContent=err.message; throw err; }
+  } catch(err) {
+    $('modelCount').textContent='查询失败';
+    $('modelDetail').textContent=err.message;
+    $('modelListHint').textContent='查询失败：' + err.message;
+    throw err;
+  }
 }));
 for (const btn of document.querySelectorAll('[data-copy]')) btn.addEventListener('click', () => perform('复制', async () => {
   const field=btn.dataset.copy;
@@ -249,3 +272,47 @@ $('lockBtn').addEventListener('click', () => perform('锁定', async () => {
 $('retryUnlock').addEventListener('click', unlock);
 setInterval(async () => {if (unlocked && !busy) { try {await fetchStatus();} catch (_) {/* locked by fetchStatus */} }}, 3000);
 unlock();
+
+// Source update controls use authenticated loopback-only dashboard endpoints.
+function paintUpdate() {
+  if (!updateInfo) return;
+  const u = updateInfo;
+  $('localVersion').textContent = u.local_version || '未知版本';
+  $('localCommit').textContent = u.local_commit ? `提交：${u.local_commit.slice(0,12)}` : '当前构建未内嵌 Git 提交号';
+  $('githubVersion').textContent = u.latest_commit ? u.latest_commit.slice(0,12) : '尚未查询';
+  $('githubDate').textContent = u.latest_date ? `提交日期：${u.latest_date.slice(0,10)}` : '基于 GitHub main 分支';
+  const labels = {unchecked:'尚未检查', checking:'检查中', current:'已是最新', available:'发现新版本', manual:'需手动更新', updating:'正在更新', restarting:'即将重启', ahead:'本地领先', diverged:'分支分叉', error:'检查失败'};
+  $('updateBadge').textContent = labels[u.status] || '版本信息';
+  $('updateMessage').textContent = u.message || '等待检查更新';
+  $('checkUpdateBtn').disabled = !!u.busy || u.status === 'checking';
+  $('applyUpdateBtn').disabled = !u.can_update || !!u.busy;
+  $('applyUpdateBtn').textContent = u.busy ? '正在更新…' : '更新到最新版 ↗';
+}
+async function refreshUpdateStatus() {
+  if (!unlocked) return;
+  updateInfo = await call('update');
+  paintUpdate();
+}
+async function checkUpdates() {
+  if (!unlocked) return;
+  if (updateInfo) { updateInfo.status = 'checking'; updateInfo.can_update = false; paintUpdate(); }
+  updateInfo = await call('update/check', {method:'POST',body:{}});
+  paintUpdate();
+}
+$('checkUpdateBtn').addEventListener('click', () => perform('检查更新', checkUpdates));
+$('applyUpdateBtn').addEventListener('click', () => {
+  if (!updateInfo?.can_update) return;
+  const local = (updateInfo.local_commit || '').slice(0,7);
+  const latest = (updateInfo.latest_commit || '').slice(0,7);
+  if (!confirm(`从 ${local} 更新到 ${latest}？\n\n更新将先测试和编译新程序，然后重启 Provider，正在执行的 Agent 请求可能中断。`)) return;
+  perform('执行更新', async () => {
+    await call('update/apply', {method:'POST',body:{}});
+    await refreshUpdateStatus();
+    toast('正在执行更新，请留意进度信息。');
+  });
+});
+setInterval(async () => {
+  if (unlocked && !busy && updateInfo?.busy) {
+    try {await refreshUpdateStatus();}catch (_) {/* app may be restarting */}
+  }
+}, 1400);

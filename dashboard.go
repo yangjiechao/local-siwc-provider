@@ -36,6 +36,7 @@ type Dashboard struct {
 	runtime    *APIRuntime
 	adminPort  int
 	control    chan<- lifecycleAction
+	updater    *UpdateManager
 }
 
 func newDashboard(server *Server) *Dashboard {
@@ -63,6 +64,9 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/restart", d.authorized(d.restartProgram))
 	mux.HandleFunc("POST /ui/api/quit", d.authorized(d.quitProgram))
 	mux.HandleFunc("GET /ui/api/models", d.authorized(d.models))
+	mux.HandleFunc("GET /ui/api/update", d.authorized(d.updateStatus))
+	mux.HandleFunc("POST /ui/api/update/check", d.authorized(d.checkUpdate))
+	mux.HandleFunc("POST /ui/api/update/apply", d.authorized(d.applyUpdate))
 
 	static, err := fs.Sub(dashboardFiles, "dashboard")
 	if err != nil {
@@ -412,4 +416,34 @@ func (d *Dashboard) models(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"models": models})
+}
+
+// Version checking and upgrades are accessible only from the authenticated
+// localhost dashboard. Neither route is exposed on the LAN-facing Agent API.
+func (d *Dashboard) updateStatus(w http.ResponseWriter, r *http.Request) {
+	if d.updater == nil {
+		writeError(w, 503, "update_unavailable", "Update manager is not configured")
+		return
+	}
+	writeJSON(w, 200, d.updater.snapshot())
+}
+func (d *Dashboard) checkUpdate(w http.ResponseWriter, r *http.Request) {
+	if d.updater == nil {
+		writeError(w, 503, "update_unavailable", "Update manager is not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	writeJSON(w, 200, d.updater.Check(ctx))
+}
+func (d *Dashboard) applyUpdate(w http.ResponseWriter, r *http.Request) {
+	if d.updater == nil {
+		writeError(w, 503, "update_unavailable", "Update manager is not configured")
+		return
+	}
+	if err := d.updater.Apply(); err != nil {
+		writeError(w, 409, "update_unavailable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"ok": true, "message": "Upgrading in the background; active agent requests may be interrupted when restarting"})
 }
