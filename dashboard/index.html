@@ -61,9 +61,22 @@
         <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
           <div class="info-box"><div class="info-label">模型目录</div><strong id="modelCount">尚未查询</strong><small id="modelDetail">登录后点击刷新。</small></div>
           <button type="button" id="refreshModelsBtn" class="btn outline" disabled>刷新模型列表 <span>↻</span></button>
-          <span class="subline">会直接请求 OpenAI 的模型目录。</span>
+          <span class="subline">会直接请求 OpenAI 的模型目录，完整模型 ID 在下方显示。</span>
         </section>
       </div>
+
+
+      <section class="panel model-directory" aria-labelledby="modelDirectoryTitle">
+        <div class="section-header model-directory-header">
+          <div><div class="overline">MODEL CATALOG</div><h2 id="modelDirectoryTitle">当前账号的可用模型</h2><p class="subheading">模型的完整 ID 会显示在这里，可搜索、选用、单独复制或一次复制全部。</p></div>
+          <div class="model-directory-actions">
+            <label for="modelSearch"><span class="visually-hidden">搜索模型 ID</span><input id="modelSearch" class="text-field" type="search" placeholder="搜索模型 ID" autocomplete="off" disabled></label>
+            <button id="copyAllModelsBtn" type="button" class="btn outline" disabled>复制全部模型 ID ⧉</button>
+          </div>
+        </div>
+        <p id="modelListHint" class="model-list-hint" role="status" aria-live="polite">点击上方“刷新模型列表”后显示完整模型 ID。</p>
+        <ul id="modelRows" class="model-list" aria-label="可用模型列表"></ul>
+      </section>
 
       <section class="panel network-panel" aria-labelledby="networkTitle">
         <div class="section-header"><div><div class="overline">NETWORK &amp; LIFECYCLE</div><h2 id="networkTitle">端口、局域网与运行控制</h2></div><span class="tag">DASHBOARD 127.0.0.1:8787</span></div>

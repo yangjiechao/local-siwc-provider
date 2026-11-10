@@ -14,7 +14,7 @@ An **experimental**, single-user, locally administered Go adapter for [Sign in w
 - OAuth authorization code with PKCE S256, `state`, `nonce`, issued `client_id`, and **ID token RS256/JWKS verification**.
 - Protected local state file (`0600`) with a stable per-host identifier, OAuth credentials, and a randomly generated Agent API key that can be replaced manually through the dashboard.
 - Automatic serialized refresh of an expiring OAuth access token (one running process per state file).
-- `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list.
+- `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list. The dashboard displays all model IDs with filtering, selection, individual copy, and copy-all actions.
 - `POST /v1/responses`: forwards supported requests; always enforces upstream `store:false` and `stream:true`. Supports streaming downstream or aggregation for non-stream callers.
 - `POST /v1/chat/completions`: **limited** compatibility layer for text, image URLs, function tools in a `namespace`, tool results, and streaming or aggregated results.
 - Only `api.openai.com/v1/models`, `api.openai.com/v1/responses`, and `auth.openai.com` OAuth/OIDC endpoints are called.

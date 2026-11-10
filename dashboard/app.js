@@ -137,14 +137,64 @@ $('saveKeyBtn').addEventListener('click', () => perform('保存 Key', async () =
   $('customKey').value = '';
   toast('已保存新 Key。请更新所有 Agent 的 API Key 配置');
 }));
+function renderModelRows() {
+  const rows = $('modelRows');
+  rows.replaceChildren();
+  const query = $('modelSearch').value.trim().toLowerCase();
+  const matches = modelList.filter(id => id.toLowerCase().includes(query));
+  $('modelSearch').disabled = modelList.length === 0;
+  $('copyAllModelsBtn').disabled = modelList.length === 0;
+  $('modelListHint').textContent = modelList.length
+    ? (query ? '匹配 ' + matches.length + ' / ' + modelList.length + ' 个模型' : '已显示全部 ' + modelList.length + ' 个模型 ID')
+    : '尚未查询到模型。请点击上方“刷新模型列表”。';
+  for (const id of matches) {
+    const li = document.createElement('li');
+    li.className = 'model-entry';
+    const code = document.createElement('code');
+    code.textContent = id;
+    code.title = id;
+    const actions = document.createElement('div');
+    actions.className = 'model-entry-actions';
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'model-action';
+    use.textContent = $('modelSelect').value === id ? '已选用' : '选用';
+    use.disabled = $('modelSelect').value === id;
+    use.addEventListener('click', () => {
+      $('modelSelect').value = id;
+      renderModelRows();
+      toast('已选用模型：' + id);
+    });
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'model-action';
+    copy.textContent = '复制 ⧉';
+    copy.setAttribute('aria-label', '复制模型 ID ' + id);
+    copy.addEventListener('click', () => perform('复制模型', () => copyText(id)));
+    actions.append(use, copy);
+    li.append(code, actions);
+    rows.append(li);
+  }
+  if (modelList.length && !matches.length) {
+    const empty = document.createElement('li');
+    empty.className = 'model-empty';
+    empty.textContent = '没有找到匹配的模型';
+    rows.append(empty);
+  }
+}
+$('modelSearch').addEventListener('input', renderModelRows);
+$('modelSelect').addEventListener('change', renderModelRows);
+$('copyAllModelsBtn').addEventListener('click', () => perform('复制全部模型', () => copyText(modelList.join('\n'))));
+
 function updateModels() {
   $('modelCount').textContent = modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
   $('modelDetail').textContent = modelList.length ? '从当前授权账号实时返回。' : '请确认账号的模型使用资格。';
   const sel = $('modelSelect'), chosen = sel.value;
   sel.replaceChildren();
-  if (modelList.length === 0) {const o=new Option('请先查询模型目录','');sel.add(o);return;}
+  if (modelList.length === 0) {const o=new Option('请先查询模型目录','');sel.add(o);renderModelRows();return;}
   for (const item of modelList) sel.add(new Option(item,item));
   if (modelList.includes(chosen)) sel.value = chosen;
+  renderModelRows();
 }
 $('refreshModelsBtn').addEventListener('click', () => perform('查询模型', async () => {
   $('modelCount').textContent = '查询中…';
