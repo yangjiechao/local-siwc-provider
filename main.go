@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,9 +15,89 @@ import (
 	"time"
 )
 
+type lifecycleAction string
+
+const (
+	lifecycleRestart lifecycleAction = "restart"
+	lifecycleQuit    lifecycleAction = "quit"
+)
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <ui|login|status|key|serve|logout> [options]\nCommands:\n  ui      Open the local web control panel (API initially stopped)\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show current authorization status\n  key     Display the local API key (keep private)\n  serve   Start localhost API and UI; --port 8787\n  logout  Revoke current renewable session")
+	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <ui|login|status|key|serve|logout> [options]\nCommands:\n  ui      Open local dashboard (default dashboard port 8787, Agent API port 8087)\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show authorization status\n  key     Display the Agent API key (keep private)\n  serve   Start dashboard + Agent API; --port overrides Agent API port\n  logout  Revoke current renewable session")
 }
+
+func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (bool, error) {
+	if adminPort < 1 || adminPort > 65535 {
+		return false, fmt.Errorf("invalid dashboard port %d", adminPort)
+	}
+	store := auth.store
+	service := newServer(auth)
+	service.apiEnabled.Store(false)
+	api := newAPIRuntime(service, adminPort)
+	done := make(chan lifecycleAction, 1)
+	dash := newDashboard(service)
+	dash.runtime = api
+	dash.adminPort = adminPort
+	dash.control = done
+	service.dashboard = dash
+
+	adminAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(adminPort))
+	adminListener, err := net.Listen("tcp4", adminAddr)
+	if err != nil {
+		return false, fmt.Errorf("dashboard port %d unavailable: %w", adminPort, err)
+	}
+	defer adminListener.Close()
+	adminSrv := &http.Server{Handler: service.AdminHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+
+	if mode == "serve" && cliAPIPort > 0 {
+		current := store.get()
+		if err = api.Configure(cliAPIPort, current.LANEnabled); err != nil {
+			return false, err
+		}
+	}
+	if mode == "serve" || store.get().APIEnabled {
+		if err = api.Start(); err != nil {
+			// Leave the dashboard online to let the user correct occupied ports.
+			log.Printf("Agent API could not start; open the dashboard to fix it: %v", err)
+		}
+	}
+	go func() {
+		if err := adminSrv.Serve(adminListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("dashboard listener stopped unexpectedly: %v", err)
+		}
+	}()
+	log.Printf("Local SIWC dashboard listening at http://%s/ui/", adminAddr)
+	state := store.get()
+	log.Printf("Agent API: port %d (LAN: %t, running: %t)", state.APIPort, state.LANEnabled, api.Running())
+	if mode == "ui" {
+		// URL fragment does not travel to HTTP server or log files.
+		link := fmt.Sprintf("http://%s/ui/#unlock=%s", adminAddr, state.AdminKey)
+		go func() {
+			time.Sleep(220 * time.Millisecond)
+			if e := browserOpen(link); e != nil {
+				log.Printf("Unable to open browser automatically: %v", e)
+			}
+		}()
+	}
+	stopCtx, cancelStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelStop()
+	var action lifecycleAction
+	select {
+	case <-stopCtx.Done():
+		action = lifecycleQuit
+	case action = <-done:
+	}
+	if err := api.Close(); err != nil {
+		log.Printf("error closing Agent API: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if err := adminSrv.Shutdown(ctx); err != nil {
+		_ = adminSrv.Close()
+	}
+	return action == lifecycleRestart, nil
+}
+
 func run() error {
 	if len(os.Args) < 2 {
 		os.Args = append(os.Args, "ui")
@@ -43,7 +124,7 @@ func run() error {
 			fmt.Printf("Signed in: yes\nAccount: %s\nClient: %s\nAccess token expires: %s\n", s.Credential.Email, s.Credential.ClientID, s.Credential.ExpiresAt.Format(time.RFC3339))
 		}
 	case "key":
-		fmt.Println("This is a localhost-only secret; do not commit or share:")
+		fmt.Println("Agent API key, keep it private:")
 		fmt.Println(store.get().LocalKey)
 	case "logout":
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -52,48 +133,37 @@ func run() error {
 			return err
 		}
 		fmt.Println("Session revoked and credentials cleared")
-	case "serve", "ui":
-		flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-		port := flags.Int("port", 8787, "localhost TCP port")
+	case "ui", "serve":
+		flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
+		adminPort := flags.Int("dashboard-port", defaultAdminPort, "loopback-only web dashboard port")
+		var cliPort *int
+		if os.Args[1] == "serve" {
+			cliPort = flags.Int("port", 0, "Agent API port (default: saved configuration / 8087)")
+		} else {
+			cliPort = flags.Int("port", 0, "deprecated: use --dashboard-port for dashboard; API port is configured in the UI")
+		}
 		if err := flags.Parse(os.Args[2:]); err != nil {
 			return err
 		}
-		if *port < 1 || *port > 65535 {
-			return fmt.Errorf("invalid port")
+		if *cliPort < 0 || *cliPort > 65535 {
+			return fmt.Errorf("invalid API port")
 		}
-		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*port))
-		listener, err := net.Listen("tcp4", addr)
-		if err != nil {
-			return err
+		// Keep old `ui --port` launchers working for dashboard port selection.
+		if os.Args[1] == "ui" && *cliPort != 0 {
+			*adminPort = *cliPort
+			*cliPort = 0
 		}
-		svc := newServer(auth)
-		if os.Args[1] == "ui" {
-			svc.apiEnabled.Store(false)
-		}
-		svc.dashboard = newDashboard(svc)
-		server := &http.Server{Handler: svc.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
-		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		go func() {
-			<-stopCtx.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_ = server.Shutdown(ctx)
-		}()
-		log.Printf("SIWC Provider listening on http://%s (localhost only)", addr)
-		if os.Args[1] == "ui" {
-			// Fragment-only unlock secret is never sent to the local HTTP server.
-			url := fmt.Sprintf("http://%s/ui/#unlock=%s", addr, store.get().AdminKey)
-			go func() {
-				time.Sleep(220 * time.Millisecond)
-				if e := browserOpen(url); e != nil {
-					log.Printf("Unable to open the browser automatically; run the ui command from a local desktop session: %v", e)
-				}
-			}()
-		}
-		err = server.Serve(listener)
-		if err != http.ErrServerClosed {
-			return err
+		for {
+			restart, err := runServers(auth, os.Args[1], *adminPort, *cliPort)
+			if err != nil {
+				return err
+			}
+			if !restart {
+				return nil
+			}
+			// After a restart, read saved settings instead of reapplying --port.
+			*cliPort = 0
+			auth = newAuth(store)
 		}
 	default:
 		usage()
@@ -101,6 +171,7 @@ func run() error {
 	}
 	return nil
 }
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)

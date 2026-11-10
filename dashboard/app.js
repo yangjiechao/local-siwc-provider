@@ -8,7 +8,7 @@ let keyShown = false;
 let modelList = [];
 let busy = false;
 let toastTimer;
-const base = `${location.origin}/v1`;
+const base = 'http://127.0.0.1:8087/v1';
 function toast(message) {
   const el = $('toast'); el.textContent = message; el.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.hidden = true, 3500);
@@ -70,11 +70,22 @@ function paintStatus() {
   $('serviceDetail').textContent = running ? '你的本地 Agent 可以连接。' : signed ? '点击下方按钮启动模型 API。' : '请先完成账号授权。';
   $('toggleServiceBtn').disabled = !signed || logging;
   $('toggleServiceBtn').textContent = running ? '停止 API 服务 ■' : '启动 API 服务 →';
+  $('restartAPIButton').disabled = !running;
   $('refreshModelsBtn').disabled = !signed || logging;
   $('accountFact').textContent = signed ? status.account.email || '已登录' : '未登录';
   $('expiryFact').textContent = signed ? new Date(status.account.expires_at).toLocaleString('zh-CN',{hour12:false}) : '—';
   $('baseURL').textContent = status.base_url || base;
-  try { $('portFact').textContent = new URL(status.base_url).port; } catch (_) {}
+  $('serviceAddress').textContent = `127.0.0.1:${status.api_port ?? 8087}`;
+  $('portFact').textContent = String(status.api_port ?? 8087);
+  $('bindFact').textContent = status.lan_enabled ? '0.0.0.0（局域网）' : '127.0.0.1（仅本机）';
+  if (document.activeElement !== $('apiPort')) $('apiPort').value = String(status.api_port ?? 8087);
+  if (document.activeElement !== $('lanSwitch')) $('lanSwitch').checked = !!status.lan_enabled;
+  $('lanURL').textContent = status.lan_enabled ? (status.lan_base_url || '未检测到可用 .local 主机名') : '局域网访问已关闭';
+  $('copyLanBtn').disabled = !status.lan_enabled || !status.lan_base_url;
+  const ips = Array.isArray(status.lan_ips) ? status.lan_ips : [];
+  $('lanHint').textContent = status.lan_enabled
+    ? `局域网 IP：${ips.length ? ips.map(ip=>`http://${ip}:${status.api_port}/v1`).join(' · ') : '未检测到'}。.local 需要 Bonjour/mDNS；普通 HTTP 不加密，请勿映射到公网或在不可信网络使用。`
+    : '局域网已关闭，只有运行 Provider 的电脑可以访问 Agent API。';
 }
 async function perform(label, fn) {
   if (busy) return;
@@ -114,6 +125,18 @@ async function copyText(content) {
   toast('已复制到剪贴板');
 }
 $('copyKeyBtn').addEventListener('click', () => perform('复制 Key', async () => {await copyText(await loadKey());}));
+$('saveKeyBtn').addEventListener('click', () => perform('保存 Key', async () => {
+  const secret = $('customKey').value;
+  if (secret.length < 16 || secret.length > 256 || /[^\x21-\x7E]/.test(secret)) {
+    throw Error('请填写 16–256 个不含空格的英文可打印字符');
+  }
+  if (!confirm('确定更换 Agent API Key？旧 Key 将立即失效，已有 Agent 需要修改配置。')) return;
+  await call('key',{method:'POST',body:{key:secret}});
+  keyCache = null; keyShown = false;
+  $('keyValue').textContent = '•••• •••• •••• ••••';
+  $('customKey').value = '';
+  toast('已保存新 Key。请更新所有 Agent 的 API Key 配置');
+}));
 function updateModels() {
   $('modelCount').textContent = modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
   $('modelDetail').textContent = modelList.length ? '从当前授权账号实时返回。' : '请确认账号的模型使用资格。';
@@ -142,6 +165,34 @@ $('copyConfigBtn').addEventListener('click', () => perform('复制配置', async
   const config=`base_url: ${status?.base_url || base}\napi_key: ${await loadKey()}\nmodel: ${model}`;
   await copyText(config);
 }));
+$('saveNetworkBtn').addEventListener('click', () => perform('保存端口', async () => {
+  const port = Number($('apiPort').value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('端口必须在 1–65535 之间');
+  await call('settings', {method:'POST',body:{port,lan:$('lanSwitch').checked}});
+  await fetchStatus();
+  toast('网络设置已保存。API 运行时已自动切换到新监听地址');
+}));
+$('copyLanBtn').addEventListener('click', () => perform('复制局域网地址', async () => {
+  await copyText(status?.lan_base_url);
+}));
+$('restartAPIButton').addEventListener('click', () => perform('重启 API', async () => {
+  await call('restart-api', {method:'POST',body:{}});
+  await fetchStatus(); toast('API 已重启');
+}));
+$('restartProgramBtn').addEventListener('click', () => {
+  if (!confirm('重启整个 Provider？正在执行的 Agent 请求会中断。')) return;
+  perform('重启程序', async () => {
+    await call('restart', {method:'POST',body:{}});
+    lock(); toast('程序正在重启，管理网页会重新打开并解锁');
+  });
+});
+$('quitProgramBtn').addEventListener('click', () => {
+  if (!confirm('彻底退出 Provider？局域网 Agent 将无法连接，直到再次启动程序。')) return;
+  perform('退出程序', async () => {
+    await call('quit', {method:'POST',body:{}});
+    lock(); toast('已发送退出请求，稍后可重新双击 start.command 启动');
+  });
+});
 $('lockBtn').addEventListener('click', () => perform('锁定', async () => {
   await call('session/logout', {method:'POST',body:{}}); lock(); toast('控制台已锁定；服务仍可保持运行');
 }));

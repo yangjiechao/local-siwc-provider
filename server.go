@@ -21,7 +21,6 @@ const maxBodySize = 8 << 20
 type Server struct {
 	auth       *Auth
 	client     *http.Client
-	localKey   string
 	apiEnabled atomic.Bool
 	dashboard  *Dashboard
 }
@@ -30,7 +29,7 @@ func newServer(a *Auth) *Server {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.ResponseHeaderTimeout = 45 * time.Second
 	tr.TLSHandshakeTimeout = 10 * time.Second
-	s := &Server{auth: a, localKey: a.store.get().LocalKey, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s := &Server{auth: a, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	s.apiEnabled.Store(true) // Preserve the existing 'serve' CLI behavior.
 	return s
 }
@@ -73,7 +72,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		if r.URL.Path != "/healthz" {
 			bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.localKey)) != 1 {
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.auth.store.get().LocalKey)) != 1 {
 				writeError(w, 401, "authentication_error", "Invalid local bearer key")
 				return
 			}
@@ -81,6 +80,64 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// APIHandler serves only the Agent API. No dashboard endpoints are reachable
+// through the LAN listener, even when the API is bound to 0.0.0.0.
+func (s *Server) APIHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, jsonMap{"status": "ok", "version": "0.3.0-dev", "api_running": s.apiEnabled.Load()})
+	})
+	mux.HandleFunc("GET /v1/models", s.models)
+	mux.HandleFunc("POST /v1/responses", s.responses)
+	mux.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/v1/") {
+			http.NotFound(w, r)
+			return
+		}
+		if !allowedAPIHost(r.Host) || !privateLANPeer(r.RemoteAddr) {
+			writeError(w, 403, "invalid_host", "Only local-network clients and local addresses are permitted")
+			return
+		}
+		if !s.apiEnabled.Load() {
+			writeError(w, 503, "provider_stopped", "Start the Agent API from the dashboard")
+			return
+		}
+		if r.Header.Get("Origin") != "" {
+			writeError(w, 403, "forbidden_origin", "Browser cross-origin calls are not supported")
+			return
+		}
+		if r.URL.Path != "/healthz" {
+			value := r.Header.Get("Authorization")
+			if !strings.HasPrefix(value, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(value, "Bearer ")), []byte(s.auth.store.get().LocalKey)) != 1 {
+				writeError(w, 401, "authentication_error", "Invalid Agent API key")
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// AdminHandler never exposes Agent API routes; it listens on loopback only.
+func (s *Server) AdminHandler() http.Handler {
+	mux := http.NewServeMux()
+	if s.dashboard != nil {
+		s.dashboard.register(mux)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			writeError(w, 403, "invalid_host", "Dashboard is available on this computer only")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	api := http.NewServeMux()

@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,9 @@ type Dashboard struct {
 	loginBusy  bool
 	loginURL   string
 	loginError string
+	runtime    *APIRuntime
+	adminPort  int
+	control    chan<- lifecycleAction
 }
 
 func newDashboard(server *Server) *Dashboard {
@@ -53,6 +57,11 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/logout", d.authorized(d.logout))
 	mux.HandleFunc("POST /ui/api/service", d.authorized(d.setService))
 	mux.HandleFunc("GET /ui/api/key", d.authorized(d.key))
+	mux.HandleFunc("POST /ui/api/key", d.authorized(d.setKey))
+	mux.HandleFunc("POST /ui/api/settings", d.authorized(d.setSettings))
+	mux.HandleFunc("POST /ui/api/restart-api", d.authorized(d.restartAPI))
+	mux.HandleFunc("POST /ui/api/restart", d.authorized(d.restartProgram))
+	mux.HandleFunc("POST /ui/api/quit", d.authorized(d.quitProgram))
 	mux.HandleFunc("GET /ui/api/models", d.authorized(d.models))
 
 	static, err := fs.Sub(dashboardFiles, "dashboard")
@@ -167,11 +176,28 @@ func (d *Dashboard) status(w http.ResponseWriter, r *http.Request) {
 	if c := state.Credential; c != nil {
 		account = map[string]any{"email": c.Email, "expires_at": c.ExpiresAt.Format(time.RFC3339), "scope_ok": hasScope(c.Scopes, requiredScope), "client_id": c.ClientID}
 	}
+	port := state.APIPort
+	if port == 0 {
+		port = defaultAPIPort
+	}
+	localBase := "http://127.0.0.1:" + strconv.Itoa(port) + "/v1"
+	var lanBase string
+	if state.LANEnabled {
+		if host := localHostLabel(); host != "" {
+			lanBase = "http://" + host + ".local:" + strconv.Itoa(port) + "/v1"
+		}
+	}
+	running := d.server.apiEnabled.Load()
+	if d.runtime != nil {
+		running = d.runtime.Running()
+	}
 	writeJSON(w, 200, map[string]any{
 		"signed_in": state.Credential != nil, "account": account,
-		"api_running": d.server.apiEnabled.Load(), "login_busy": busy,
+		"api_running": running, "login_busy": busy,
 		"login_url": authURL, "login_error": loginError,
-		"base_url": "http://" + r.Host + "/v1",
+		"base_url": localBase, "api_port": port,
+		"lan_enabled": state.LANEnabled, "lan_base_url": lanBase,
+		"lan_ips": localIPAddrs(), "dashboard_port": d.adminPort,
 	})
 }
 
@@ -220,7 +246,14 @@ func (d *Dashboard) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 502, "logout_failed", err.Error())
 		return
 	}
-	d.server.apiEnabled.Store(false)
+	if d.runtime != nil {
+		if err := d.runtime.Stop(); err != nil {
+			writeError(w, 500, "service_error", "Could not stop Agent API")
+			return
+		}
+	} else {
+		d.server.apiEnabled.Store(false)
+	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -239,12 +272,110 @@ func (d *Dashboard) setService(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	d.server.apiEnabled.Store(*body.Enabled)
+	if d.runtime != nil {
+		var err error
+		if *body.Enabled {
+			err = d.runtime.Start()
+		} else {
+			err = d.runtime.Stop()
+		}
+		if err != nil {
+			writeError(w, 409, "service_error", err.Error())
+			return
+		}
+	} else {
+		d.server.apiEnabled.Store(*body.Enabled)
+	}
 	writeJSON(w, 200, map[string]any{"api_running": *body.Enabled})
 }
 
 func (d *Dashboard) key(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]string{"key": d.server.localKey})
+	writeJSON(w, 200, map[string]string{"key": d.server.auth.store.get().LocalKey})
+}
+
+// setKey accepts a user-chosen Agent key but never changes the OAuth or admin key.
+// Updating the store is sufficient because API authentication reads the live value.
+func (d *Dashboard) setKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid key request")
+		return
+	}
+	if len(body.Key) < 16 || len(body.Key) > 256 || strings.TrimSpace(body.Key) != body.Key {
+		writeError(w, 400, "bad_key", "API key must be 16-256 characters with no leading or trailing spaces")
+		return
+	}
+	for _, char := range body.Key {
+		if char < 33 || char > 126 {
+			writeError(w, 400, "bad_key", "API key must contain printable ASCII characters only")
+			return
+		}
+	}
+	if err := d.server.auth.store.saveLocalKey(body.Key); err != nil {
+		writeError(w, 500, "save_failed", "Could not store the new Agent API key")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (d *Dashboard) setSettings(w http.ResponseWriter, r *http.Request) {
+	if d.runtime == nil {
+		writeError(w, 503, "not_available", "API listener is not managed by this dashboard")
+		return
+	}
+	var body struct {
+		Port int   `json:"port"`
+		LAN  *bool `json:"lan"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.LAN == nil {
+		writeError(w, 400, "bad_request", "Specify API port and LAN enabled flag")
+		return
+	}
+	if err := d.runtime.Configure(body.Port, *body.LAN); err != nil {
+		writeError(w, 409, "settings_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "port": body.Port, "lan": *body.LAN})
+}
+
+func (d *Dashboard) restartAPI(w http.ResponseWriter, r *http.Request) {
+	if d.runtime == nil {
+		writeError(w, 503, "not_available", "API listener is not managed by this dashboard")
+		return
+	}
+	if !d.runtime.Running() {
+		writeError(w, 409, "service_stopped", "Start the API before restarting it")
+		return
+	}
+	if err := d.runtime.Restart(); err != nil {
+		writeError(w, 409, "restart_failed", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (d *Dashboard) lifecycle(w http.ResponseWriter, action lifecycleAction) {
+	if d.control == nil {
+		writeError(w, 503, "not_available", "Lifecycle control is unavailable")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "action": action})
+	// Reply before tearing down the browser connection.
+	time.AfterFunc(250*time.Millisecond, func() {
+		select {
+		case d.control <- action:
+		default:
+		}
+	})
+}
+
+func (d *Dashboard) restartProgram(w http.ResponseWriter, r *http.Request) {
+	d.lifecycle(w, lifecycleRestart)
+}
+func (d *Dashboard) quitProgram(w http.ResponseWriter, r *http.Request) {
+	d.lifecycle(w, lifecycleQuit)
 }
 
 func (d *Dashboard) models(w http.ResponseWriter, r *http.Request) {

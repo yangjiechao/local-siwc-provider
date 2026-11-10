@@ -33,7 +33,7 @@
         <div class="hero-art" aria-hidden="true"><span class="halo h1"></span><span class="halo h2"></span><span class="halo h3"></span><div class="orb"><span>⌘</span></div><span class="orbit-node n1"></span><span class="orbit-node n2"></span><span class="orbit-node n3"></span></div>
       </section>
 
-      <section class="steps-heading"><div><div class="overline">QUICK SETUP</div><h2>四步完成接入</h2><p>按顺序操作；已完成的步骤会自动显示状态。</p></div><span class="tiny-note">LOCALHOST ONLY · 127.0.0.1</span></section>
+      <section class="steps-heading"><div><div class="overline">QUICK SETUP</div><h2>四步完成接入</h2><p>按顺序操作；已完成的步骤会自动显示状态。</p></div><span class="tiny-note">MANAGEMENT LOCAL ONLY · API 8087 + LAN</span></section>
       <div class="cards">
         <section class="panel" aria-labelledby="loginTitle"><div class="panel-top"><span class="step-num">01</span><span class="panel-symbol">◎</span></div><h3 id="loginTitle">授权 ChatGPT</h3><p class="desc">通过 OpenAI 官方网页登录你自己的 ChatGPT 账号。</p>
           <div class="info-box"><div class="info-label">账号状态</div><strong id="loginState">尚未登录</strong><small id="loginDetail">首次授权需要浏览器确认。</small></div>
@@ -45,13 +45,17 @@
         <section class="panel" aria-labelledby="serviceTitle"><div class="panel-top"><span class="step-num">02</span><span class="panel-symbol">⏻</span></div><h3 id="serviceTitle">启停本地 API</h3><p class="desc">网页始终可管理；启动 API 后 Agent 才能调用模型。</p>
           <div class="info-box"><div class="info-label">服务状态</div><strong id="serviceState">API 已停止</strong><small id="serviceDetail">请先完成账号授权。</small></div>
           <button type="button" id="toggleServiceBtn" class="btn dark" disabled>启动 API 服务 <span>→</span></button>
-          <span class="subline">服务地址：<code>127.0.0.1:8787</code></span>
+          <button type="button" id="restartAPIButton" class="btn outline secondary-btn" disabled>重启 API 服务 ↻</button>
+          <span class="subline">Agent 地址：<code id="serviceAddress">127.0.0.1:8087</code></span>
         </section>
 
         <section class="panel" aria-labelledby="keyTitle"><div class="panel-top"><span class="step-num">03</span><span class="panel-symbol">⌁</span></div><h3 id="keyTitle">获取本地 API Key</h3><p class="desc">这不是 ChatGPT Token，只用于你的 Agent 访问本地 Provider。</p>
           <div class="key-box"><span id="keyValue">•••• •••• •••• ••••</span><button id="revealKeyBtn" type="button" class="icon-btn" title="显示或隐藏本地 Key" aria-label="显示或隐藏本地 Key">◉</button></div>
           <button type="button" id="copyKeyBtn" class="btn outline">复制本地 Key <span>⧉</span></button>
-          <span class="subline">敏感凭据仅在你主动查看时读取。</span>
+          <label class="small-label" for="customKey">自定义 API Key（16–256 个 ASCII 字符）</label>
+          <input class="text-field" id="customKey" type="password" autocomplete="new-password" minlength="16" maxlength="256" spellcheck="false" placeholder="输入你希望 Agent 使用的 Key">
+          <button type="button" id="saveKeyBtn" class="btn outline secondary-btn">保存自定义 Key</button>
+          <span class="subline">保存后旧 Key 立即失效，请同步修改 Agent 的配置。切勿使用其他网站密码。</span>
         </section>
 
         <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
@@ -61,16 +65,29 @@
         </section>
       </div>
 
+      <section class="panel network-panel" aria-labelledby="networkTitle">
+        <div class="section-header"><div><div class="overline">NETWORK &amp; LIFECYCLE</div><h2 id="networkTitle">端口、局域网与运行控制</h2></div><span class="tag">DASHBOARD 127.0.0.1:8787</span></div>
+        <p class="subheading">管理页面始终仅本机可访问；Agent API 默认使用 <code>8087</code>。修改 API 端口并保存后，服务会自动在新端口重新监听。</p>
+        <div class="network-grid">
+          <label class="network-field" for="apiPort"><span>Agent API 端口</span><input id="apiPort" class="text-field" inputmode="numeric" type="number" min="1" max="65535" value="8087"></label>
+          <label class="check-field"><input id="lanSwitch" type="checkbox" checked><span>允许同一局域网的设备访问 API</span></label>
+          <button id="saveNetworkBtn" type="button" class="btn dark">保存端口和网络设置</button>
+        </div>
+        <div class="lan-address"><strong>Mac / Bonjour 局域网地址（候选）</strong><code id="lanURL">登录后显示</code><button id="copyLanBtn" type="button" class="copy-mini">复制</button></div>
+        <p class="security-hint" id="lanHint">局域网 HTTP 未加密，会传输你的 API Key。请仅在可信的家庭或办公网络使用，不要映射到公网；.local 需要设备支持 Bonjour/mDNS。</p>
+        <div class="lifecycle-actions"><button id="restartProgramBtn" type="button" class="btn outline">重启整个程序 ↻</button><button id="quitProgramBtn" type="button" class="btn danger">退出 Provider ■</button></div>
+      </section>
+
       <section class="lower-grid">
         <div class="panel wide"><div class="section-header"><div><div class="overline">AGENT CONNECTION</div><h2>连接你的 Agent</h2></div><span class="tag">OPENAI COMPATIBLE</span></div>
           <p class="subheading">在 Harness 的配置中填写以下参数，Provider 不会修改你的 Agent 代码。</p>
-          <div class="settings"><div class="setting"><div class="setting-name">Base URL</div><code id="baseURL">http://127.0.0.1:8787/v1</code><button class="copy-mini" data-copy="base" type="button">复制</button></div>
+          <div class="settings"><div class="setting"><div class="setting-name">Base URL</div><code id="baseURL">http://127.0.0.1:8087/v1</code><button class="copy-mini" data-copy="base" type="button">复制</button></div>
             <div class="setting"><div class="setting-name">API Key</div><code>使用上方生成的本地 Key</code><button class="copy-mini" data-copy="key" type="button">复制</button></div>
             <div class="setting"><div class="setting-name">Model</div><select id="modelSelect" aria-label="选择模型"><option value="">请先查询模型目录</option></select><button class="copy-mini" data-copy="model" type="button">复制</button></div>
           </div>
           <div class="config-actions"><button id="copyConfigBtn" class="btn dark" type="button">复制 Agent 配置 <span>⧉</span></button><span>适配支持情况取决于 Agent 的 SDK 和请求参数。</span></div>
         </div>
-        <div class="panel mini-panel"><div class="overline">SERVICE INFO</div><h2>运行信息</h2><div class="fact"><span>绑定地址</span><strong>127.0.0.1</strong></div><div class="fact"><span>监听端口</span><strong id="portFact">8787</strong></div><div class="fact"><span>登录账号</span><strong id="accountFact">未登录</strong></div><div class="fact"><span>Token 过期</span><strong id="expiryFact">—</strong></div><div class="fact"><span>上游</span><strong>Responses API</strong></div>
+        <div class="panel mini-panel"><div class="overline">SERVICE INFO</div><h2>运行信息</h2><div class="fact"><span>API 绑定</span><strong id="bindFact">0.0.0.0（局域网）</strong></div><div class="fact"><span>API 端口</span><strong id="portFact">8087</strong></div><div class="fact"><span>登录账号</span><strong id="accountFact">未登录</strong></div><div class="fact"><span>Token 过期</span><strong id="expiryFact">—</strong></div><div class="fact"><span>上游</span><strong>Responses API</strong></div>
           <div class="notice"><span>ⓘ</span><p>这是开发预览版。实际 SIWC 资格、模型权限和复杂工具调用还需要实测。</p></div></div>
       </section>
 
