@@ -242,7 +242,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_request_error", err.Error())
 		return
 	}
-	if err = validateResponses(request); err != nil {
+	if err = sanitizeResponsesForSIWC(request); err != nil {
 		writeError(w, 400, "unsupported_capability", err.Error())
 		return
 	}

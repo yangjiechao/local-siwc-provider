@@ -11,11 +11,19 @@ import (
 type jsonMap = map[string]any
 
 var forbiddenResponseFields = map[string]bool{
-	"background": true, "conversation": true, "max_output_tokens": true, "max_tool_calls": true,
+	"background": true, "conversation": true, "max_tool_calls": true,
 	"metadata": true, "moderation": true, "multi_agent": true, "prompt": true,
 	"prompt_cache_retention": true, "safety_identifier": true, "temperature": true,
 	"top_logprobs": true, "top_p": true, "truncation": true, "user": true,
 	"previous_response_id": true,
+}
+
+// sanitizeResponsesForSIWC accepts max_output_tokens for client compatibility but
+// deliberately removes it before validation and upstream inference. SIWC does not
+// support an output limit on this route, so the caller-provided cap is NOT enforced.
+func sanitizeResponsesForSIWC(m jsonMap) error {
+	delete(m, "max_output_tokens")
+	return validateResponses(m)
 }
 
 func validateResponses(m jsonMap) error {
@@ -55,7 +63,7 @@ func mapChatToResponses(req jsonMap) (jsonMap, error) {
 		return nil, errors.New("messages must be nonempty array")
 	}
 	// Fail closed rather than quietly ignoring parameters that change model behavior.
-	allowed := map[string]bool{"model": true, "messages": true, "tools": true, "tool_choice": true, "stream": true, "stream_options": true, "parallel_tool_calls": true}
+	allowed := map[string]bool{"model": true, "messages": true, "tools": true, "tool_choice": true, "stream": true, "stream_options": true, "parallel_tool_calls": true, "max_output_tokens": true}
 	for key := range req {
 		if !allowed[key] {
 			return nil, fmt.Errorf("unsupported Chat Completions parameter: %s", key)

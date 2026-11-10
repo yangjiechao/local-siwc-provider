@@ -156,3 +156,38 @@ func TestStorePermissionsAndUUID(t *testing.T) {
 		t.Fatalf("store invalid: %v", err)
 	}
 }
+
+// Callers can set max_output_tokens without the unsupported field ever reaching SIWC.
+func TestIgnoreMaxOutputTokensOnResponses(t *testing.T) {
+	for _, input := range []any{float64(8192), float64(0), "not-used", nil} {
+		req := jsonMap{"model": "m", "input": "Hello", "max_output_tokens": input, "store": false, "stream": true}
+		if err := sanitizeResponsesForSIWC(req); err != nil {
+			t.Fatalf("max_output_tokens=%v should be accepted: %v", input, err)
+		}
+		if _, exists := req["max_output_tokens"]; exists {
+			t.Fatalf("max_output_tokens leaked into upstream request: %#v", req)
+		}
+	}
+	bad := jsonMap{"model": "m", "input": "Hello", "max_output_tokens": float64(1024), "temperature": float64(0.5)}
+	if err := sanitizeResponsesForSIWC(bad); err == nil || !strings.Contains(err.Error(), "temperature") {
+		t.Fatalf("other unsupported parameters must still be rejected: %v", err)
+	}
+}
+
+func TestIgnoreMaxOutputTokensOnChatCompletions(t *testing.T) {
+	req := jsonMap{
+		"model": "m",
+		"messages": []any{jsonMap{"role": "user", "content": "Hello"}},
+		"max_output_tokens": float64(8192),
+	}
+	mapped, err := mapChatToResponses(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := mapped["max_output_tokens"]; exists {
+		t.Fatalf("output limit leaked to SIWC: %#v", mapped)
+	}
+	if mapped["store"] != false || mapped["stream"] != true {
+		t.Fatal("required SIWC flags changed")
+	}
+}

@@ -86,3 +86,7 @@ go build -o siwc-provider .
 首次获得此功能，需要先手动运行一次 `git pull origin main`，再双击 `start.command`，让本地二进制包含对应提交号。以后可在网页中检查和安装新版本。
 
 若 GitHub 发布了新提交但你本地已经修改过源码，可以先 `git status` 检查，并自行处理修改后再使用更新功能。不要通过强制重置覆盖自己的代码。
+
+### `max_output_tokens` 兼容处理
+
+`POST /v1/responses` 与 `POST /v1/chat/completions` 均允许客户端携带 `max_output_tokens`，Provider 会在向 SIWC 上游发送前**直接移除**，不再仅因这个字段返回 400。**该字段的数值不会生效**，不能限制实际推理或输出长度；其他不支持的字段仍会按原规则报错。如果需要严格控制输出 Token 上限，应改用支持该参数的接口。

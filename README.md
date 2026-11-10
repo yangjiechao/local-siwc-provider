@@ -145,3 +145,7 @@ One-click updates require an official Git clone with a clean `main` branch, the 
 On update, the app fetches from the pinned project GitHub origin, verifies fast-forward ancestry, creates a temporary Git worktree, runs `go test ./...` and `go build` in the worktree, then fast-forwards the main checkout, replaces the binary with a backup (`siwc-provider.previous`), and restarts the application. Failed tests/builds do not replace the current executable. Updating will interrupt active Agent requests. OAuth credentials and API settings in the protected state directory are not modified. The update endpoint is available only from the authenticated loopback dashboard, never from the LAN-facing Agent API.
 
 For the first update to a version that contains this feature, run `git pull origin main` and launch `start.command` once to compile a binary with its source commit embedded. Future upgrades can be managed from the dashboard. You should still review source changes before installing any downloaded code, especially in security-sensitive installations.
+
+### Compatibility: `max_output_tokens`
+
+Both `POST /v1/responses` and `POST /v1/chat/completions` accept `max_output_tokens` from clients, **but intentionally discard it before calling SIWC**. A requested limit is **not enforced** and does not cap reasoning or visible output. All other unsupported parameters continue to return explicit errors. If you need a guaranteed output-token limit, use a route that supports the parameter.
