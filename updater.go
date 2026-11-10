@@ -215,12 +215,12 @@ func (u *UpdateManager) checkSource(ctx context.Context) error {
 	if err != nil || head != u.state.LocalCommit {
 		return errors.New("正在运行的二进制与仓库源码版本不一致；请用 start.command 重新启动")
 	}
-	dirty, err := gitCmd(ctx, u.repoDir, "status", "--porcelain", "--untracked-files=normal")
+	dirty, err := gitCmd(ctx, u.repoDir, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return err
 	}
 	if dirty != "" {
-		return errors.New("源码目录包含本地未提交修改，请先提交、暂存或移走后再更新")
+		return errors.New("Git 跟踪的源码文件存在本地修改或暂存，为保护这些修改不能自动更新；普通新文件不受此限制")
 	}
 	if _, err := exec.LookPath("go"); err != nil {
 		return errors.New("一键源码更新需要本机安装 Go 1.23+；否则请下载预编译版本")
@@ -304,6 +304,16 @@ func (u *UpdateManager) Check(ctx context.Context) UpdateSnapshot {
 			if err == nil {
 				switch diff.Status {
 				case "ahead":
+					// Git fetch has the target objects, so check for path conflicts
+					// before enabling the update button. Tests of the HTTP fallback
+					// cannot safely inspect nonexistent mock Git objects.
+					if usingGit {
+						if conflict := u.checkUpdateCollisions(ctx, latest.SHA); conflict != nil {
+							status = "manual"
+							msg = conflict.Error()
+							break
+						}
+					}
 					status = "available"
 					can = true
 					msg = fmt.Sprintf("发现 %d 个新提交，可安全快进更新。", diff.AheadBy)
@@ -440,6 +450,12 @@ func (u *UpdateManager) apply(ctx context.Context, target string) error {
 	}
 	if err := u.checkSource(ctx); err != nil {
 		return fmt.Errorf("更新前源代码状态改变：%w", err)
+	}
+	// User files may change while the new version is being tested and compiled.
+	// Recheck immediately before touching the checkout; Git merge provides
+	// an additional final safeguard against races after this preflight.
+	if err := u.checkUpdateCollisions(ctx, target); err != nil {
+		return err
 	}
 	u.setPhase("installing", "测试通过，正在快进仓库并安装新版…")
 	if _, err := gitCmd(ctx, u.repoDir, "merge", "--ff-only", target); err != nil {

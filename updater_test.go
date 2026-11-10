@@ -83,8 +83,15 @@ func TestVersionCheckAndLocalChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	result = u.Check(context.Background())
-	if result.Status != "manual" || result.CanUpdate || !strings.Contains(result.Message, "未提交") {
-		t.Fatalf("dirty working tree should block auto upgrade: %+v", result)
+	if result.Status != "available" || !result.CanUpdate {
+		t.Fatalf("unrelated untracked files must not block updates: %+v", result)
+	}
+	if err := os.WriteFile(filepath.Join(u.repoDir, "README"), []byte("changed tracked file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result = u.Check(context.Background())
+	if result.Status != "manual" || result.CanUpdate || !strings.Contains(result.Message, "跟踪") {
+		t.Fatalf("tracked modifications still block updates: %+v", result)
 	}
 	if err := u.Apply(); err == nil {
 		t.Fatal("Apply should refuse when update is not available")

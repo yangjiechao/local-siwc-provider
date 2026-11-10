@@ -167,3 +167,8 @@ The Agent endpoint remains `http://127.0.0.1:8087/v1` (or the configured LAN add
 **Legal boundary:** multi-provider routing for independently authorized APIs is not itself SIWC subscription sharing; it does not authorize a generic ChatGPT-plan proxy for arbitrary external tools. Read [NOTICE-SIWC-COMPLIANCE.md](NOTICE-SIWC-COMPLIANCE.md) before integrating with any third-party app.
 
 **SIWC parameter compatibility:** `max_output_tokens` is accepted on the local Responses and Chat Completions endpoints but intentionally removed before SIWC upstream calls. The requested output cap is **not enforced**. Independently authorized external providers receive their own request parameters unchanged (except the model prefix).
+
+
+### Untracked local files during updates
+
+Arbitrary new files and directories in the checkout **do not block** automatic updates. You do not need to commit, stage, or edit `.gitignore` for your personal files. Only modifications to Git-tracked source files remain blocked. Before offering an update, the updater checks whether any files introduced by the new commit collide with existing paths (including ignored files, symlinks, and file/directory conflicts); it lists colliding paths instead of overwriting them. It rechecks immediately before installation. These safeguards apply to official clean Git clones with embedded build commits; updates to standalone binaries remain unsupported.
