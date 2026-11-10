@@ -324,8 +324,29 @@ function resetProviderForm() {
   $('providerForm').reset();
   $('providerId').readOnly = false;
   $('providerKey').value = '';
+  $('providerKey').required = true;
   $('saveProviderBtn').textContent = '保存模型商';
   $('providerEnabled').checked = true;
+}
+function openProviderDialog(item=null) {
+  resetProviderForm();
+  if (item) {
+    $('providerId').value=item.id; $('providerId').readOnly=true;
+    $('providerName').value=item.name; $('providerKind').value=item.kind;
+    $('providerBase').value=item.base_url; $('providerKey').value='';
+    $('providerModels').value=(item.manual_models || []).join('\n');
+    $('providerEnabled').checked=item.enabled;
+    $('providerKey').required=false;
+    $('providerDialogTitle').textContent='编辑模型商 · '+item.name;
+    $('saveProviderBtn').textContent='保存修改';
+  } else {
+    $('providerDialogTitle').textContent='新增模型商';
+  }
+  $('providerDialog').showModal();
+  $('providerId').focus();
+}
+function closeProviderDialog() {
+  if ($('providerDialog').open) $('providerDialog').close();
 }
 function providerButton(label, fn) {
   const b=document.createElement('button');b.type='button';b.className='btn outline';b.textContent=label;
@@ -333,8 +354,16 @@ function providerButton(label, fn) {
 }
 function renderProviders() {
   const host=$('providerList');host.replaceChildren();
-  if (!configuredProviders.length) {const p=document.createElement('p');p.textContent='尚未配置额外模型商。';host.append(p);return;}
-  for (const item of configuredProviders) {
+  const count=configuredProviders.length,enabled=configuredProviders.filter(x=>x.enabled).length;
+  $('providerSummary').textContent=count?count+' 个模型商 · '+enabled+' 个已启用':'尚未配置额外模型商';
+  const q=$('providerSearch').value.trim().toLocaleLowerCase();
+  const filtered=configuredProviders.filter(x=>(x.id+' '+x.name+' '+x.kind).toLocaleLowerCase().includes(q));
+  if (!filtered.length) {
+    const p=document.createElement('p');p.className='provider-empty';
+    p.textContent=count?'没有符合搜索条件的模型商。':'暂无额外模型商，点击「新增模型商」添加。';
+    host.append(p);return;
+  }
+  for (const item of filtered) {
     const row=document.createElement('div');row.className='provider-entry';
     const info=document.createElement('div');
     const name=document.createElement('div');name.className='name';name.textContent=`${item.name} (${item.id}) ${item.enabled ? '· 已启用' : '· 已禁用'}`;
@@ -343,15 +372,16 @@ function renderProviders() {
     info.append(name,meta);
     if (item.discovery_error) {const warn=document.createElement('div');warn.className='error';warn.textContent=`目录获取失败：${item.discovery_error}。可以手动填写模型 ID。`;info.append(warn);}
     const actions=document.createElement('div');actions.className='provider-actions';
-    actions.append(providerButton('编辑', () => {
-      $('providerId').value=item.id;$('providerId').readOnly=true;
-      $('providerName').value=item.name;$('providerKind').value=item.kind;
-      $('providerBase').value=item.base_url;$('providerKey').value='';
-      $('providerModels').value=(item.manual_models || []).join('\n');
-      $('providerEnabled').checked=item.enabled;
-      $('saveProviderBtn').textContent='保存修改';
-      $('providerForm').scrollIntoView({behavior:'smooth',block:'center'});
-    }));
+    actions.append(providerButton(item.enabled?'禁用':'启用',()=>perform('切换模型商',async()=>{
+      const nowEnabled=!item.enabled;
+      await call('providers',{method:'POST',body:{
+        id:item.id,name:item.name,kind:item.kind,base_url:item.base_url,
+        api_key:'',enabled:nowEnabled,manual_models:item.manual_models||[]
+      }});
+      await loadProviders();await fetchStatus();
+      toast('模型商 '+item.name+' 已'+(nowEnabled?'启用':'禁用'));
+    })));
+    actions.append(providerButton('编辑',()=>openProviderDialog(item)));
     actions.append(providerButton('删除', () => {
       if (!confirm(`确定删除模型商 ${item.name}？该模型商的 API Key 也会从本机配置移除。`)) return;
       perform('删除模型商',async()=>{
@@ -359,6 +389,13 @@ function renderProviders() {
         await loadProviders();toast(`已删除 ${item.id}`);
       });
     }));
+    if (Array.isArray(item.models) && item.models.length) {
+      const models=document.createElement('details');models.className='provider-model-details';
+      const summary=document.createElement('summary');summary.textContent='查看 '+item.models.length+' 个模型 ID';
+      const values=document.createElement('div');values.className='provider-model-values';
+      for (const model of item.models) {const code=document.createElement('code');code.textContent=model;values.append(code);}
+      models.append(summary,values);info.append(models);
+    }
     row.append(info,actions);host.append(row);
   }
 }
@@ -373,7 +410,11 @@ async function loadProviders(withModels=true) {
     updateModels();
   }
 }
-$('resetProviderBtn').addEventListener('click',resetProviderForm);
+$('addProviderBtn').addEventListener('click',()=>openProviderDialog());
+$('closeProviderBtn').addEventListener('click',closeProviderDialog);
+$('resetProviderBtn').addEventListener('click',closeProviderDialog);
+$('providerDialog').addEventListener('close',resetProviderForm);
+$('providerSearch').addEventListener('input',renderProviders);
 $('providerForm').addEventListener('submit', event=>{
   event.preventDefault();
   perform('保存模型商',async()=>{
@@ -385,7 +426,7 @@ $('providerForm').addEventListener('submit', event=>{
       manual_models:$('providerModels').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
     };
     await call('providers',{method:'POST',body:payload});
-    resetProviderForm();await loadProviders();await fetchStatus();
+    closeProviderDialog();await loadProviders();await fetchStatus();
     toast(`模型商 ${id} 已保存，后台正在同步模型目录`);
   });
 });
@@ -399,7 +440,7 @@ $('refreshProvidersBtn').addEventListener('click',()=>perform('刷新模型',asy
 // The backend refreshes model catalogs at startup. Reflect the result without
 // requiring a manual click, while avoiding requests during form editing.
 setInterval(async()=>{
-  if (unlocked && !busy && document.activeElement?.id !== 'providerKey' && document.activeElement?.id !== 'providerModels') {
+  if (unlocked && !busy && !$('providerDialog').open) {
     try {await loadProviders();}catch(_) { /* local dashboard may be exiting */ }
   }
 },15000);
