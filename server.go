@@ -12,22 +12,27 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const maxBodySize = 8 << 20
 
 type Server struct {
-	auth     *Auth
-	client   *http.Client
-	localKey string
+	auth       *Auth
+	client     *http.Client
+	localKey   string
+	apiEnabled atomic.Bool
+	dashboard  *Dashboard
 }
 
 func newServer(a *Auth) *Server {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.ResponseHeaderTimeout = 45 * time.Second
 	tr.TLSHandshakeTimeout = 10 * time.Second
-	return &Server{auth: a, localKey: a.store.get().LocalKey, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s := &Server{auth: a, localKey: a.store.get().LocalKey, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s.apiEnabled.Store(true) // Preserve the existing 'serve' CLI behavior.
+	return s
 }
 
 func writeError(w http.ResponseWriter, status int, kind, msg string) {
@@ -78,13 +83,37 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, jsonMap{"status": "ok", "version": "0.1.0-dev", "signed_in": s.auth.store.get().Credential != nil})
+	api := http.NewServeMux()
+	api.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, jsonMap{"status": "ok", "version": "0.2.0-dev", "signed_in": s.auth.store.get().Credential != nil, "api_running": s.apiEnabled.Load()})
 	})
-	mux.HandleFunc("GET /v1/models", s.models)
-	mux.HandleFunc("POST /v1/responses", s.responses)
-	mux.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
-	return s.authMiddleware(mux)
+	api.HandleFunc("GET /v1/models", s.models)
+	api.HandleFunc("POST /v1/responses", s.responses)
+	api.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
+	apiHandler := s.authMiddleware(api)
+	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.apiEnabled.Load() {
+			writeError(w, 503, "provider_stopped", "Start the API from the local dashboard")
+			return
+		}
+		apiHandler.ServeHTTP(w, r)
+	}))
+	mux.Handle("/healthz", apiHandler)
+	if s.dashboard != nil {
+		s.dashboard.register(mux)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reject DNS rebinding and non-loopback traffic before any routes are handled.
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" {
+			writeError(w, 403, "invalid_host", "Only 127.0.0.1 is permitted")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 func (s *Server) upstream(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	token, err := s.auth.accessToken(ctx)

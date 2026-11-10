@@ -100,6 +100,15 @@ func browserOpen(url string) error {
 }
 
 func (a *Auth) login(ctx context.Context) error {
+	return a.loginWithLauncher(ctx, func(authURL string) {
+		fmt.Println("Continue with ChatGPT: open this official authorization link in your browser:\n" + authURL)
+		if e := browserOpen(authURL); e != nil {
+			fmt.Println("Browser not opened automatically; use the URL above.")
+		}
+	})
+}
+
+func (a *Auth) loginWithLauncher(ctx context.Context, launcher func(string)) error {
 	prior := a.store.get()
 	verifier, err := randomString(48)
 	if err != nil {
@@ -210,10 +219,7 @@ func (a *Auth) login(ctx context.Context) error {
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go server.Serve(l)
 	defer server.Shutdown(context.Background())
-	fmt.Println("Continue with ChatGPT: open this official authorization link in your browser:\n" + authURL)
-	if e := browserOpen(authURL); e != nil {
-		fmt.Println("Browser not opened automatically; use the URL above.")
-	}
+	launcher(authURL)
 	select {
 	case e := <-result:
 		return e

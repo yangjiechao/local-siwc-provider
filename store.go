@@ -29,6 +29,7 @@ type Credential struct {
 type State struct {
 	HostID     string      `json:"host_id"`
 	LocalKey   string      `json:"local_key"`
+	AdminKey   string      `json:"admin_key"`
 	Credential *Credential `json:"credential,omitempty"`
 }
 
@@ -95,6 +96,16 @@ func newStore(path string) (*Store, error) {
 		if s.state.HostID == "" || s.state.LocalKey == "" {
 			return nil, errors.New("state missing host ID or local key")
 		}
+		// Migrate existing installations without changing the local API key or OAuth credentials.
+		if s.state.AdminKey == "" {
+			s.state.AdminKey, err = randomString(32)
+			if err != nil {
+				return nil, err
+			}
+			if err = s.saveLocked(); err != nil {
+				return nil, err
+			}
+		}
 	} else if os.IsNotExist(err) {
 		x, e := randomHostID()
 		if e != nil {
@@ -104,7 +115,11 @@ func newStore(path string) (*Store, error) {
 		if e != nil {
 			return nil, e
 		}
-		s.state = State{HostID: x, LocalKey: y}
+		adminKey, e := randomString(32)
+		if e != nil {
+			return nil, e
+		}
+		s.state = State{HostID: x, LocalKey: y, AdminKey: adminKey}
 		if e = s.saveLocked(); e != nil {
 			return nil, e
 		}

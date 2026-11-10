@@ -15,12 +15,11 @@ import (
 )
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <login|status|key|serve|logout> [options]\nCommands:\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show current authorization status\n  key     Display the local API key (keep private)\n  serve   Start localhost OpenAI-compatible API; --port 8787\n  logout  Revoke current renewable session")
+	fmt.Fprintln(os.Stderr, "Usage: siwc-provider <ui|login|status|key|serve|logout> [options]\nCommands:\n  ui      Open the local web control panel (API initially stopped)\n  login   Continue with ChatGPT (OAuth PKCE)\n  status  Show current authorization status\n  key     Display the local API key (keep private)\n  serve   Start localhost API and UI; --port 8787\n  logout  Revoke current renewable session")
 }
 func run() error {
 	if len(os.Args) < 2 {
-		usage()
-		return fmt.Errorf("missing command")
+		os.Args = append(os.Args, "ui")
 	}
 	path := os.Getenv("SIWC_STATE_FILE")
 	store, err := newStore(path)
@@ -53,7 +52,7 @@ func run() error {
 			return err
 		}
 		fmt.Println("Session revoked and credentials cleared")
-	case "serve":
+	case "serve", "ui":
 		flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 		port := flags.Int("port", 8787, "localhost TCP port")
 		if err := flags.Parse(os.Args[2:]); err != nil {
@@ -67,7 +66,12 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		server := &http.Server{Handler: newServer(auth).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+		svc := newServer(auth)
+		if os.Args[1] == "ui" {
+			svc.apiEnabled.Store(false)
+		}
+		svc.dashboard = newDashboard(svc)
+		server := &http.Server{Handler: svc.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		go func() {
@@ -76,7 +80,17 @@ func run() error {
 			defer cancel()
 			_ = server.Shutdown(ctx)
 		}()
-		log.Printf("SIWC Provider listening at http://%s/v1 (localhost only)", addr)
+		log.Printf("SIWC Provider listening on http://%s (localhost only)", addr)
+		if os.Args[1] == "ui" {
+			// Fragment-only unlock secret is never sent to the local HTTP server.
+			url := fmt.Sprintf("http://%s/ui/#unlock=%s", addr, store.get().AdminKey)
+			go func() {
+				time.Sleep(220 * time.Millisecond)
+				if e := browserOpen(url); e != nil {
+					log.Printf("Unable to open the browser automatically; run the ui command from a local desktop session: %v", e)
+				}
+			}()
+		}
 		err = server.Serve(listener)
 		if err != http.ErrServerClosed {
 			return err

@@ -12,3 +12,6 @@ dist/
 *.exe
 *.test
 .DS_Store
+
+# Local compiled binary
+/siwc-provider
