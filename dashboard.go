@@ -5,8 +5,6 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
-	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -64,6 +62,10 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/restart", d.authorized(d.restartProgram))
 	mux.HandleFunc("POST /ui/api/quit", d.authorized(d.quitProgram))
 	mux.HandleFunc("GET /ui/api/models", d.authorized(d.models))
+	mux.HandleFunc("GET /ui/api/providers", d.authorized(d.listProviders))
+	mux.HandleFunc("POST /ui/api/providers", d.authorized(d.saveProvider))
+	mux.HandleFunc("POST /ui/api/providers/delete", d.authorized(d.deleteProvider))
+	mux.HandleFunc("POST /ui/api/providers/refresh", d.authorized(d.refreshProviders))
 	mux.HandleFunc("GET /ui/api/update", d.authorized(d.updateStatus))
 	mux.HandleFunc("POST /ui/api/update/check", d.authorized(d.checkUpdate))
 	mux.HandleFunc("POST /ui/api/update/apply", d.authorized(d.applyUpdate))
@@ -195,8 +197,15 @@ func (d *Dashboard) status(w http.ResponseWriter, r *http.Request) {
 	if d.runtime != nil {
 		running = d.runtime.Running()
 	}
+	externalCount := 0
+	for _, provider := range state.Providers {
+		if provider.Enabled {
+			externalCount++
+		}
+	}
 	writeJSON(w, 200, map[string]any{
-		"signed_in": state.Credential != nil, "account": account,
+		"external_providers": externalCount,
+		"signed_in":          state.Credential != nil, "account": account,
 		"api_running": running, "login_busy": busy,
 		"login_url": authURL, "login_error": loginError,
 		"base_url": localBase, "api_port": port,
@@ -225,6 +234,13 @@ func (d *Dashboard) startLogin(w http.ResponseWriter, r *http.Request) {
 			// If it fails, the authorized local dashboard can show a fallback link.
 			_ = browserOpen(loginURL)
 		})
+		if err == nil && d.server.router != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				defer cancel()
+				d.server.router.Refresh(ctx)
+			}()
+		}
 		d.mu.Lock()
 		d.loginBusy = false
 		d.loginURL = ""
@@ -250,14 +266,28 @@ func (d *Dashboard) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 502, "logout_failed", err.Error())
 		return
 	}
-	if d.runtime != nil {
-		if err := d.runtime.Stop(); err != nil {
-			writeError(w, 500, "service_error", "Could not stop Agent API")
-			return
+	externalActive := false
+	for _, p := range d.server.auth.store.get().Providers {
+		if p.Enabled {
+			externalActive = true
+			break
 		}
-	} else {
-		d.server.apiEnabled.Store(false)
 	}
+	if !externalActive {
+		if d.runtime != nil {
+			if err := d.runtime.Stop(); err != nil {
+				writeError(w, 500, "service_error", "Could not stop Agent API")
+				return
+			}
+		} else {
+			d.server.apiEnabled.Store(false)
+		}
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		d.server.router.Refresh(ctx)
+	}()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -270,9 +300,16 @@ func (d *Dashboard) setService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *body.Enabled {
-		c := d.server.auth.store.get().Credential
-		if c == nil || !hasScope(c.Scopes, requiredScope) {
-			writeError(w, 409, "login_required", "Complete ChatGPT authorization before starting the API")
+		st := d.server.auth.store.get()
+		eligible := st.Credential != nil && hasScope(st.Credential.Scopes, requiredScope)
+		for _, p := range st.Providers {
+			if p.Enabled {
+				eligible = true
+				break
+			}
+		}
+		if !eligible {
+			writeError(w, 409, "provider_required", "Authorize ChatGPT or configure an enabled external provider first")
 			return
 		}
 	}
@@ -383,39 +420,16 @@ func (d *Dashboard) quitProgram(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Dashboard) models(w http.ResponseWriter, r *http.Request) {
-	if d.server.auth.store.get().Credential == nil {
-		writeError(w, 409, "login_required", "Sign in before loading models")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	resp, err := d.server.upstream(ctx, http.MethodGet, "/models", nil)
-	if err != nil {
-		writeError(w, 502, "upstream_unavailable", err.Error())
-		return
+	d.server.router.Refresh(ctx)
+	entries := d.server.router.Models()
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		writeError(w, resp.StatusCode, "upstream_models_error", fmt.Sprintf("Model discovery returned HTTP %d", resp.StatusCode))
-		return
-	}
-	var payload struct {
-		Models []struct {
-			Slug       string `json:"slug"`
-			Visibility string `json:"visibility"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
-		writeError(w, 502, "invalid_upstream", "Invalid model list returned by OpenAI")
-		return
-	}
-	models := make([]string, 0, len(payload.Models))
-	for _, m := range payload.Models {
-		if m.Visibility == "list" && m.Slug != "" {
-			models = append(models, m.Slug)
-		}
-	}
-	writeJSON(w, 200, map[string]any{"models": models})
+	own, ok, errMsg := d.server.router.OwnModels()
+	writeJSON(w, 200, map[string]any{"models": ids, "details": entries, "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "providers": d.server.router.Providers()})
 }
 
 // Version checking and upgrades are accessible only from the authenticated

@@ -6,6 +6,7 @@ let status = null;
 let keyCache = null;
 let keyShown = false;
 let modelList = [];
+let configuredProviders = [];
 let modelsLoaded = false;
 let updateInfo = null;
 let busy = false;
@@ -43,6 +44,7 @@ async function unlock() {
   try {
     unlocked = true;
     await fetchStatus();
+    await loadProviders();
     $('lockScreen').hidden = true;
     $('content').hidden = false;
     // Show the last known version immediately; GitHub check happens separately.
@@ -73,11 +75,11 @@ function paintStatus() {
   if (!link.hidden) link.href = status.login_url;
   else link.removeAttribute('href');
   $('serviceState').textContent = running ? '服务运行中' : 'API 已停止';
-  $('serviceDetail').textContent = running ? '你的本地 Agent 可以连接。' : signed ? '点击下方按钮启动模型 API。' : '请先完成账号授权。';
-  $('toggleServiceBtn').disabled = !signed || logging;
+  $('serviceDetail').textContent = running ? '你的本地 Agent 可以连接。' : signed || status?.external_providers ? '点击下方按钮启动模型 API。' : '请先完成账号授权或配置额外模型商。';
+  $('toggleServiceBtn').disabled = (!signed && !(status?.external_providers > 0)) || logging;
   $('toggleServiceBtn').textContent = running ? '停止 API 服务 ■' : '启动 API 服务 →';
   $('restartAPIButton').disabled = !running;
-  $('refreshModelsBtn').disabled = !signed || logging;
+  $('refreshModelsBtn').disabled = (!signed && !(status?.external_providers > 0)) || logging;
   $('accountFact').textContent = signed ? status.account.email || '已登录' : '未登录';
   $('expiryFact').textContent = signed ? new Date(status.account.expires_at).toLocaleString('zh-CN',{hour12:false}) : '—';
   $('baseURL').textContent = status.base_url || base;
@@ -197,7 +199,7 @@ function renderModelRows() {
 }
 function updateModels() {
   $('modelCount').textContent = !modelsLoaded ? '尚未查询' : modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
-  $('modelDetail').textContent = !modelsLoaded ? '登录后点击刷新。' : modelList.length ? '完整模型 ID 已在下方列出。' : '请确认账号的模型使用资格。';
+  $('modelDetail').textContent = !modelsLoaded ? '登录或配置模型商后点击刷新。' : modelList.length ? '完整模型 ID 已在下方列出。' : '请确认 SIWC 账号或额外模型商的模型权限。';
   const sel = $('modelSelect'), chosen = sel.value;
   sel.replaceChildren();
   if (modelList.length === 0) sel.add(new Option('请先查询模型目录',''));
@@ -214,12 +216,12 @@ $('modelSelect').addEventListener('change', renderModelRows);
 $('copyAllModelsBtn').addEventListener('click', () => perform('复制模型列表', () => copyText(modelList.join('\n'))));
 $('refreshModelsBtn').addEventListener('click', () => perform('查询模型', async () => {
   $('modelCount').textContent = '查询中…';
-  $('modelListHint').textContent = '正在从 OpenAI 查询模型目录…';
+  $('modelListHint').textContent = '正在查询 SIWC 与额外模型商目录…';
   try {
     const result = await call('models');
     modelList = Array.isArray(result.models) ? result.models.filter(id => typeof id === 'string' && id.length > 0) : [];
     modelsLoaded = true;
-    updateModels(); toast(`查询完成：${modelList.length} 个模型`);
+    updateModels(); await loadProviders(false); toast(`查询完成：${modelList.length} 个模型`);
   } catch(err) {
     $('modelCount').textContent='查询失败';
     $('modelDetail').textContent=err.message;
@@ -316,3 +318,88 @@ setInterval(async () => {
     try {await refreshUpdateStatus();}catch (_) {/* app may be restarting */}
   }
 }, 1400);
+
+// External provider management: never fetch or render stored upstream API keys.
+function resetProviderForm() {
+  $('providerForm').reset();
+  $('providerId').readOnly = false;
+  $('providerKey').value = '';
+  $('saveProviderBtn').textContent = '保存模型商';
+  $('providerEnabled').checked = true;
+}
+function providerButton(label, fn) {
+  const b=document.createElement('button');b.type='button';b.className='btn outline';b.textContent=label;
+  b.addEventListener('click', fn);return b;
+}
+function renderProviders() {
+  const host=$('providerList');host.replaceChildren();
+  if (!configuredProviders.length) {const p=document.createElement('p');p.textContent='尚未配置额外模型商。';host.append(p);return;}
+  for (const item of configuredProviders) {
+    const row=document.createElement('div');row.className='provider-entry';
+    const info=document.createElement('div');
+    const name=document.createElement('div');name.className='name';name.textContent=`${item.name} (${item.id}) ${item.enabled ? '· 已启用' : '· 已禁用'}`;
+    const meta=document.createElement('div');meta.className='details';
+    meta.textContent=`${item.kind} · ${item.base_url} · ${item.models?.length || 0} 个模型 · ${item.has_api_key ? 'Key 已保存（不会回显）' : '缺少 Key'}`;
+    info.append(name,meta);
+    if (item.discovery_error) {const warn=document.createElement('div');warn.className='error';warn.textContent=`目录获取失败：${item.discovery_error}。可以手动填写模型 ID。`;info.append(warn);}
+    const actions=document.createElement('div');actions.className='provider-actions';
+    actions.append(providerButton('编辑', () => {
+      $('providerId').value=item.id;$('providerId').readOnly=true;
+      $('providerName').value=item.name;$('providerKind').value=item.kind;
+      $('providerBase').value=item.base_url;$('providerKey').value='';
+      $('providerModels').value=(item.manual_models || []).join('\n');
+      $('providerEnabled').checked=item.enabled;
+      $('saveProviderBtn').textContent='保存修改';
+      $('providerForm').scrollIntoView({behavior:'smooth',block:'center'});
+    }));
+    actions.append(providerButton('删除', () => {
+      if (!confirm(`确定删除模型商 ${item.name}？该模型商的 API Key 也会从本机配置移除。`)) return;
+      perform('删除模型商',async()=>{
+        await call('providers/delete',{method:'POST',body:{id:item.id}});
+        await loadProviders();toast(`已删除 ${item.id}`);
+      });
+    }));
+    row.append(info,actions);host.append(row);
+  }
+}
+async function loadProviders(withModels=true) {
+  if (!unlocked) return;
+  const data=await call('providers');
+  configuredProviders=Array.isArray(data.providers) ? data.providers : [];
+  renderProviders();
+  if (withModels && Array.isArray(data.models)) {
+    modelList=data.models.map(x=>x.id).filter(Boolean);
+    modelsLoaded=true;
+    updateModels();
+  }
+}
+$('resetProviderBtn').addEventListener('click',resetProviderForm);
+$('providerForm').addEventListener('submit', event=>{
+  event.preventDefault();
+  perform('保存模型商',async()=>{
+    const id=$('providerId').value.trim();
+    const payload={
+      id,name:$('providerName').value.trim(),kind:$('providerKind').value,
+      base_url:$('providerBase').value.trim(),api_key:$('providerKey').value.trim(),
+      enabled:$('providerEnabled').checked,
+      manual_models:$('providerModels').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
+    };
+    await call('providers',{method:'POST',body:payload});
+    resetProviderForm();await loadProviders();await fetchStatus();
+    toast(`模型商 ${id} 已保存，后台正在同步模型目录`);
+  });
+});
+$('refreshProvidersBtn').addEventListener('click',()=>perform('刷新模型',async()=>{
+  const data=await call('providers/refresh',{method:'POST',body:{}});
+  modelList=Array.isArray(data.models) ? data.models.map(m=>m.id).filter(Boolean) : [];
+  modelsLoaded=true;updateModels();await loadProviders(false);
+  toast(`刷新完成，共 ${modelList.length} 个模型`);
+}));
+
+// The backend refreshes model catalogs at startup. Reflect the result without
+// requiring a manual click, while avoiding requests during form editing.
+setInterval(async()=>{
+  if (unlocked && !busy && document.activeElement?.id !== 'providerKey' && document.activeElement?.id !== 'providerModels') {
+    try {await loadProviders();}catch(_) { /* local dashboard may be exiting */ }
+  }
+},15000);

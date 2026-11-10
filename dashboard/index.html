@@ -65,6 +65,25 @@
         </section>
       </div>
 
+      <section class="panel provider-panel" aria-labelledby="providerTitle">
+        <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">添加自己的独立 API Key。支持 DeepSeek 等 OpenAI 兼容模型商，以及火山方舟 Seedance 视频任务。启动时会尝试获取各模型商的可用模型。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
+        <div class="notice"><span>⚠</span><p><strong>重要合规提示：</strong> SIWC 订阅仅允许授权应用自身使用，不能因为本软件开源就转售、共享订阅或为其他无关工具提供通用 ChatGPT API。额外模型商使用你单独购买或申请的 API Key，按各自条款计费；不要使用多账号绕过限额。详见 <a href="https://github.com/yangjiechao/local-siwc-provider/blob/main/NOTICE-SIWC-COMPLIANCE.md" target="_blank" rel="noopener noreferrer">合规与风险声明</a>。</p></div>
+        <form id="providerForm" class="provider-form" autocomplete="off">
+          <div class="provider-form-grid">
+            <label><span>模型商 ID（如 deepseek）</span><input class="text-field" id="providerId" required pattern="[a-z][a-z0-9_-]{1,31}" placeholder="deepseek"></label>
+            <label><span>显示名称</span><input class="text-field" id="providerName" required maxlength="80" placeholder="DeepSeek 官方"></label>
+            <label><span>接口类型</span><select class="text-field" id="providerKind"><option value="openai-compatible">OpenAI 兼容 API（聊天/工具）</option><option value="ark-video">火山方舟 Ark Video（Seedance 视频任务）</option></select></label>
+            <label><span>API Base URL（HTTPS）</span><input class="text-field" id="providerBase" type="url" required placeholder="https://api.deepseek.com/v1"></label>
+            <label><span>模型商 API Key</span><input class="text-field" type="password" id="providerKey" maxlength="4096" autocomplete="new-password" placeholder="新建必填；编辑时留空保持原 Key"></label>
+            <label><span>自定义模型 ID（每行一个，可选）</span><textarea class="text-field" id="providerModels" rows="3" placeholder="目录不提供 /models 时，手动添加模型，例如 Ark 的推理接入点 ID"></textarea></label>
+          </div>
+          <label class="check-field"><input id="providerEnabled" type="checkbox" checked><span>启用这个模型商</span></label>
+          <div class="provider-actions"><button type="submit" class="btn dark" id="saveProviderBtn">保存模型商</button><button type="button" id="resetProviderBtn" class="btn outline">清空表单</button><button type="button" id="refreshProvidersBtn" class="btn outline">重新获取全部模型</button></div>
+        </form>
+        <div id="providerList" class="provider-list" aria-live="polite"><p>暂无额外模型商。</p></div>
+        <p class="security-hint">模型 ID 推荐使用 <code>模型商ID/模型ID</code>，如 <code>deepseek/deepseek-flash</code>。不带前缀时优先匹配 SIWC；多个外部模型商同名则要求指定前缀。Seedance 不是聊天模型，使用 <code>/v1/contents/generations/tasks</code> 异步任务接口。所有额外模型商按其自己的账单计费，绝不因 SIWC 限额自动切换。</p>
+      </section>
+
       <section class="panel model-directory" aria-labelledby="modelDirectoryTitle">
         <div class="section-header model-directory-header">
           <div><div class="overline">MODEL CATALOG</div><h2 id="modelDirectoryTitle">当前账号的可用模型</h2><p class="subheading">这里会显示模型的完整 ID，可以单独复制、选用，或一次复制全部模型 ID。</p></div>

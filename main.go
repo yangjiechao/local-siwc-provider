@@ -36,6 +36,12 @@ func runServers(auth *Auth, mode string, adminPort int, cliAPIPort int) (lifecyc
 	store := auth.store
 	service := newServer(auth)
 	service.apiEnabled.Store(false)
+	// Discovery is best-effort, non-blocking and never switches billing paths.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+		service.router.Refresh(ctx)
+	}()
 	api := newAPIRuntime(service, adminPort)
 	done := make(chan lifecycleAction, 1)
 	dash := newDashboard(service)

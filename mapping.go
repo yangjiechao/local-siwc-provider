@@ -18,9 +18,8 @@ var forbiddenResponseFields = map[string]bool{
 	"previous_response_id": true,
 }
 
-// sanitizeResponsesForSIWC accepts max_output_tokens for client compatibility but
-// deliberately removes it before validation and upstream inference. SIWC does not
-// support an output limit on this route, so the caller-provided cap is NOT enforced.
+// max_output_tokens is accepted from clients for compatibility but ignored on SIWC.
+// It must never be sent to the SIWC subscription route.
 func sanitizeResponsesForSIWC(m jsonMap) error {
 	delete(m, "max_output_tokens")
 	return validateResponses(m)

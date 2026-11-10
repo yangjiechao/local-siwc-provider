@@ -1,5 +1,11 @@
 # Local SIWC Provider
 
+> [!CAUTION]
+> **SIWC compliance and account-risk notice (effective terms: November 4, 2026):** This open-source code is **not a license to expose ChatGPT plan usage as a general-purpose API gateway**. OpenAI SIWC §3.1 limits plan usage to the application the user explicitly connected. Do **not** use the SIWC route to serve other unrelated apps, pool or resell accounts, fulfill another user's requests, bypass usage limits, or run unconsented background jobs. A user's own multi-agent system may be part of their authorized application, but claiming that fact does **not** itself establish compliance. Verify your specific integration and request authorization where needed. Violations may cause application access to be suspended. See [full compliance and security notice](NOTICE-SIWC-COMPLIANCE.md) and [OpenAI SIWC Terms](https://openai.com/policies/sign-in-with-chatgpt-terms/).
+>
+> **External providers use separate credentials and billing.** They do not expand SIWC entitlements, and SIWC 401/403/429 errors never trigger fallback to a paid provider. Prompts and media submitted to external APIs are sent to those vendors subject to their own terms and privacy policies.
+
+
 [简体中文使用指南](README.zh-CN.md) · Dashboard available in Chinese.
 
 **New in 0.3 preview:** Separate localhost dashboard (8787) and Agent API (8087), configurable Agent API port, LAN access and Mac `.local` URL, custom Agent API keys, service restart and full app restart/quit controls.
@@ -108,7 +114,7 @@ The adapter always sends `store:false,stream:true` to the upstream SIWC route. I
 - Redirects are disabled on HTTP clients; OIDC `jwks_uri` and `revocation_endpoint` must resolve to `auth.openai.com` over HTTPS.
 - Returning sign-in reuses the issued `client_id`; the retained ID-token hint is not put in printed URLs. `logout` attempts OIDC refresh-token revocation and preserves the account registration mapping.
 - Agent API routes require a Bearer key and reject requests containing an `Origin` header. API clients must originate on the host or private/local network and use localhost, private IP or the Mac's Bonjour hostname. Browser dashboard routes are **not mounted** on the Agent API listener. The dashboard uses a separate authenticated session and is always bound to loopback. Never forward the Agent API port on a router or expose it to public networks; API requests (including API keys and prompts) are **plaintext HTTP** on LAN, so use only a trusted local network. Cloud hosting/public exposure, browser-based cross-origin clients, or remote Internet proxies are not supported.
-- Strict Chat Completions compatibility only. **Unsupported model parameters are rejected explicitly** (including `temperature`, `max_completion_tokens`, `response_format`, etc.). No fabricated JSON mode, false max-token guarantee, previous-response continuation, or hosted tools.
+- Strict Chat Completions compatibility only. **Unsupported model parameters are rejected explicitly** (including `temperature`, `max_completion_tokens`, `response_format`, etc.). `max_output_tokens` is the exception: accepted and silently removed for SIWC (its limit does not apply). No fabricated JSON mode, false max-token guarantee, previous-response continuation, or hosted tools.
 - The adapter translates text and local function tools; advanced multi-step reasoning items, audio/video, and full multimodal history are **not** preserved in Chat Completions mode. For complex reasoning, prefer native `/v1/responses`.
 - SSE fails closed for aggregated calls unless `response.completed` arrives. Raw streaming follows upstream events and the caller must check the terminal status. Unexpected streaming failures cannot retroactively change an HTTP 200 status.
 - Neither SIWC model eligibility nor tool namespaces have been live-tested against a real account. `tool_choice` and parallel tool behavior can vary by model and account.
@@ -146,6 +152,18 @@ On update, the app fetches from the pinned project GitHub origin, verifies fast-
 
 For the first update to a version that contains this feature, run `git pull origin main` and launch `start.command` once to compile a binary with its source commit embedded. Future upgrades can be managed from the dashboard. You should still review source changes before installing any downloaded code, especially in security-sensitive installations.
 
-### Compatibility: `max_output_tokens`
+## Multiple model providers (preview)
 
-Both `POST /v1/responses` and `POST /v1/chat/completions` accept `max_output_tokens` from clients, **but intentionally discard it before calling SIWC**. A requested limit is **not enforced** and does not cap reasoning or visible output. All other unsupported parameters continue to return explicit errors. If you need a guaranteed output-token limit, use a route that supports the parameter.
+The local **Model Providers** dashboard lets the owner add independent API providers with ID, name, type, HTTPS base URL, separate API key, enabled flag and optional manually registered model IDs. The provider starts a background model-directory refresh on launch; you can refresh again from the dashboard. Discovery failures are visible, and manual model IDs are retained. External credentials are stored only in the local `0600` state file, never in GitHub.
+
+The Agent endpoint remains `http://127.0.0.1:8087/v1` (or the configured LAN address). `GET /v1/models` returns the union of authorized SIWC models and external providers. External models use `provider-id/upstream-model-id`, e.g. `deepseek/deepseek-flash`, to avoid collisions. The original model ID is sent to the selected provider with its own API key. Unprefixed IDs first match the current user's SIWC catalog, then one unique external model. If SIWC discovery fails, the gateway does not guess and fall back to another paid source. Errors and rate limits are never an excuse for changing provider or billing. No API keys are included in list responses.
+
+- **OpenAI-compatible providers**: `GET /models`, `POST /chat/completions`, and `POST /responses` (only if the selected provider itself implements it). No guarantee that every provider supports the Responses route or identical request parameters.
+- **Ark Video / Seedance**: use `POST /v1/contents/generations/tasks` with a prefixed model ID, and `GET /v1/contents/generations/tasks/{task_id}?provider=<id>` to poll. Configure the Ark API v3 HTTPS base URL, manually register endpoint/model IDs when discovery is unavailable, and supply an independent Ark API key. Video responses are asynchronous and **not** Chat Completions.
+- Provider endpoints must be public HTTPS domains. The adapter blocks redirects and private, local and link-local destinations to reduce accidental key leakage and SSRF.
+
+**Example**: DeepSeek provider ID `deepseek`, type `openai-compatible`, URL `https://api.deepseek.com`, API key from your own DeepSeek account. Use the exact models returned by DeepSeek's `/models` endpoint. For Seedance, choose type `ark-video` and supply the official Ark video model/endpoint ID. Provider-specific subscriptions, access requirements, prices, compatibility and privacy controls must be verified directly with the vendor.
+
+**Legal boundary:** multi-provider routing for independently authorized APIs is not itself SIWC subscription sharing; it does not authorize a generic ChatGPT-plan proxy for arbitrary external tools. Read [NOTICE-SIWC-COMPLIANCE.md](NOTICE-SIWC-COMPLIANCE.md) before integrating with any third-party app.
+
+**SIWC parameter compatibility:** `max_output_tokens` is accepted on the local Responses and Chat Completions endpoints but intentionally removed before SIWC upstream calls. The requested output cap is **not enforced**. Independently authorized external providers receive their own request parameters unchanged (except the model prefix).

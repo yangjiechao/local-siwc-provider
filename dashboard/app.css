@@ -43,3 +43,18 @@
 .update-history{font-size:12px;font-weight:700;color:#287e5c}
 .update-message{border-left:3px solid #a3cbb0;background:#f6faf7;border-radius:0 7px 7px 0;padding:11px 14px;line-height:1.65;font-size:12px;color:#4d7460;margin:15px 0 5px;overflow-wrap:anywhere}
 @media(max-width:650px){.update-panel{padding:21px}.update-version-grid{grid-template-columns:1fr}.update-toolbar{align-items:stretch;flex-direction:column}.update-toolbar .btn{width:100%}}
+
+/* External provider management, isolated from the legacy SIWC login card. */
+.provider-form{display:grid;gap:14px;margin:18px 0 24px}
+.provider-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.provider-form-grid label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted,#60666e)}
+.provider-form-grid textarea{min-height:83px;resize:vertical;line-height:1.5}
+.provider-form-grid .text-field{width:100%;box-sizing:border-box}
+.provider-actions{display:flex;gap:8px;flex-wrap:wrap}
+.provider-list{display:grid;gap:10px;margin-top:14px}
+.provider-entry{border:1px solid var(--border,#ddd);border-radius:10px;padding:13px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.provider-entry .name{font-weight:650;overflow-wrap:anywhere}
+.provider-entry .details{font-size:12px;opacity:.73;overflow-wrap:anywhere;margin-top:5px}
+.provider-entry .error{font-size:12px;color:#b63b31;margin-top:6px;overflow-wrap:anywhere}
+.provider-entry .provider-actions{display:flex;align-items:center;gap:7px}
+@media(max-width:680px){.provider-form-grid{grid-template-columns:1fr}.provider-entry{align-items:flex-start}}

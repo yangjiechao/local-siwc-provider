@@ -23,6 +23,7 @@ type Server struct {
 	client     *http.Client
 	apiEnabled atomic.Bool
 	dashboard  *Dashboard
+	router     *Router
 }
 
 func newServer(a *Auth) *Server {
@@ -30,6 +31,7 @@ func newServer(a *Auth) *Server {
 	tr.ResponseHeaderTimeout = 45 * time.Second
 	tr.TLSHandshakeTimeout = 10 * time.Second
 	s := &Server{auth: a, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s.router = newRouter(a)
 	s.apiEnabled.Store(true) // Preserve the existing 'serve' CLI behavior.
 	return s
 }
@@ -88,9 +90,11 @@ func (s *Server) APIHandler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, jsonMap{"status": "ok", "version": "0.3.0-dev", "api_running": s.apiEnabled.Load()})
 	})
-	mux.HandleFunc("GET /v1/models", s.models)
-	mux.HandleFunc("POST /v1/responses", s.responses)
-	mux.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
+	mux.HandleFunc("GET /v1/models", s.routedModels)
+	mux.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/responses") })
+	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/chat/completions") })
+	mux.HandleFunc("POST /v1/contents/generations/tasks", s.routeVideoTask)
+	mux.HandleFunc("GET /v1/contents/generations/tasks/{id}", s.routeVideoTask)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/v1/") {
 			http.NotFound(w, r)
@@ -144,9 +148,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, jsonMap{"status": "ok", "version": "0.2.0-dev", "signed_in": s.auth.store.get().Credential != nil, "api_running": s.apiEnabled.Load()})
 	})
-	api.HandleFunc("GET /v1/models", s.models)
-	api.HandleFunc("POST /v1/responses", s.responses)
-	api.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
+	api.HandleFunc("GET /v1/models", s.routedModels)
+	api.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/responses") })
+	api.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/chat/completions") })
 	apiHandler := s.authMiddleware(api)
 	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.apiEnabled.Load() {

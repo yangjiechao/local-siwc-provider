@@ -1,5 +1,10 @@
 # Local SIWC Provider（本地网页控制台）
 
+> **⚠️ 重要合规风险提示（2026 年 11 月 4 日生效的 SIWC 条款）：** 本项目开源不代表允许其他人将 ChatGPT 订阅额度转为**任意第三方工具可调用的通用 API**。OpenAI SIWC 条款 §3.1 要求套餐额度仅用于用户实际授权连接的应用。不得跨用户共享、代替他人发起请求、账号池/轮换账号绕过限额、转售，后台自动化须取得用户明确同意。即使 Harness 和多个 Agent 属于同一个应用，也应自行验证是否符合授权范围；不能仅凭“同一应用”的声明保证合规。违规可能导致应用 SIWC 权限受限或停用。详见 [合规与安全声明](NOTICE-SIWC-COMPLIANCE.md) 和 [OpenAI SIWC 官方条款](https://openai.com/policies/sign-in-with-chatgpt-terms/)。
+>
+> **独立模型商单独付费：** DeepSeek、火山方舟等通过各自正规 API Key 调用，按对应服务条款和价格计费。发生 SIWC 登录失败、限额或不具资格时，程序不会自动切换到付费供应商。外部请求内容会传给对应模型商，请注意隐私与成本。
+
+
 > **开发预览版，不是正式可用承诺。** Provider 的 OAuth 授权、SIWC 订阅资格、模型清单和多轮工具调用仍需在真实 ChatGPT 账号上进行端到端验证。开源本身也不代表已获准为任意第三方闭源 Agent 中转 ChatGPT 订阅额度。
 
 只需启动一个本地 Go 程序，就可以在网页中完成：
@@ -29,7 +34,7 @@ chmod +x start.command
 ./start.command
 ```
 
-也可以直接执行 `go run . ui --port 8787`。程序默认监听 `127.0.0.1:8787`，网页地址为 <http://127.0.0.1:8787/ui/>，**不要把网页作为可公开访问的云服务部署**。
+也可以直接执行 `go run . ui --dashboard-port 8787`。程序默认监听 `127.0.0.1:8787`，网页地址为 <http://127.0.0.1:8787/ui/>，**不要把网页作为可公开访问的云服务部署**。
 
 ### 连接你的工具 Agent
 
@@ -87,6 +92,16 @@ go build -o siwc-provider .
 
 若 GitHub 发布了新提交但你本地已经修改过源码，可以先 `git status` 检查，并自行处理修改后再使用更新功能。不要通过强制重置覆盖自己的代码。
 
-### `max_output_tokens` 兼容处理
+## 多模型商转发（预览）
 
-`POST /v1/responses` 与 `POST /v1/chat/completions` 均允许客户端携带 `max_output_tokens`，Provider 会在向 SIWC 上游发送前**直接移除**，不再仅因这个字段返回 400。**该字段的数值不会生效**，不能限制实际推理或输出长度；其他不支持的字段仍会按原规则报错。如果需要严格控制输出 Token 上限，应改用支持该参数的接口。
+在管理网页的「**额外模型商管理**」中输入模型商 ID、显示名称、接口类型、API Base URL、该供应商自己申请的 API Key、启用状态，以及可选的手动模型 ID（每行一个）。配置只保存在本机 `0600` 保护的状态文件中，网页不会回显供应商原始密钥。启动后程序会后台尝试获取 SIWC 和所有已启用模型商的模型列表，页面也可手动刷新。若供应商不提供标准 `/models`，可手动添加模型；页面会显示目录查询失败原因。
+
+Agent 的 `base_url` 仍然是 `http://127.0.0.1:8087/v1`。模型 ID 推荐 `供应商ID/真实模型ID`，例如 `deepseek/deepseek-flash`；程序会在发送给 DeepSeek 时去掉 `deepseek/` 前缀并使用 DeepSeek 自己的 API Key。`GET /v1/models` 返回各模型商的合并列表。使用不带前缀的模型时，SIWC 模型优先；外部同名模型需要显式指定供应商。不因 SIWC 429、401 或超额而自动转发到收费模型，避免意外账单。
+
+- **DeepSeek 等 OpenAI 兼容商**：支持 `/v1/chat/completions`，若上游支持也可使用 `/v1/responses`；兼容程度以具体厂商为准。参考配置：URL 为 `https://api.deepseek.com`，类型 `openai-compatible`。
+- **Seedance / 火山方舟视频模型**：请选择 `ark-video`，Base URL 为 `https://ark.cn-beijing.volces.com/api/v3`（需按自己的地区和官方接口确认），独立 Ark API Key。视频生成不是聊天补全，要通过本地 `POST /v1/contents/generations/tasks` 发起异步任务、通过 `GET /v1/contents/generations/tasks/{id}?provider=供应商ID` 查询。对于未在 `/models` 中返回的 Seedance/Endpoint ID 可手动添加。
+- **安全**：模型商只能配置外部 HTTPS 域名，不允许回环/内网地址和跳转。局域网 Agent API 若使用普通 HTTP，API Key、Prompt 和输出未加密；不要映射到公网。外部模型商可能收取费用并处理发送的用户内容。
+
+**给开源使用者的提醒：** 仅限同一被授权应用自身使用 SIWC 的 ChatGPT 套餐；如果将本项目连接到其他无关 Agent、公开出售订阅额度或为他人转发推理，就可能违反 SIWC 的“Connected application only”等要求。请务必阅读 [NOTICE-SIWC-COMPLIANCE.md](NOTICE-SIWC-COMPLIANCE.md) 并自行评估、必要时联系 OpenAI 确认。
+
+**参数兼容提醒：** 调用 SIWC 时可携带 `max_output_tokens`，Provider 会删除此字段，不会因此报错，但输出 Token 上限**不会实际生效**。发送给独立模型商时，除去路由前缀外不会自动剥离此字段，具体由该供应商决定是否支持。

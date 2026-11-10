@@ -27,13 +27,14 @@ type Credential struct {
 }
 
 type State struct {
-	HostID     string      `json:"host_id"`
-	LocalKey   string      `json:"local_key"`
-	AdminKey   string      `json:"admin_key"`
-	APIPort    int         `json:"api_port"`
-	LANEnabled bool        `json:"lan_enabled"`
-	APIEnabled bool        `json:"api_enabled"`
-	Credential *Credential `json:"credential,omitempty"`
+	HostID     string             `json:"host_id"`
+	LocalKey   string             `json:"local_key"`
+	AdminKey   string             `json:"admin_key"`
+	APIPort    int                `json:"api_port"`
+	LANEnabled bool               `json:"lan_enabled"`
+	APIEnabled bool               `json:"api_enabled"`
+	Credential *Credential        `json:"credential,omitempty"`
+	Providers  []ExternalProvider `json:"providers,omitempty"`
 }
 
 type Store struct {
@@ -192,7 +193,70 @@ func (s *Store) get() State {
 		c := *v.Credential
 		v.Credential = &c
 	}
+	if v.Providers != nil {
+		v.Providers = append([]ExternalProvider(nil), v.Providers...)
+		for i := range v.Providers {
+			v.Providers[i].ManualModels = append([]string(nil), v.Providers[i].ManualModels...)
+		}
+	}
 	return v
+}
+
+// upsertProvider saves an independent provider without changing SIWC credentials.
+// Empty APIKey during edits preserves the previously saved key.
+func (s *Store) upsertProvider(p ExternalProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	before := append([]ExternalProvider(nil), s.state.Providers...)
+	found := false
+	for i := range s.state.Providers {
+		if s.state.Providers[i].ID == p.ID {
+			found = true
+			if p.APIKey == "" {
+				if p.BaseURL != s.state.Providers[i].BaseURL {
+					return errors.New("API key must be re-entered when provider URL changes")
+				}
+				p.APIKey = s.state.Providers[i].APIKey
+			}
+			s.state.Providers[i] = p
+			break
+		}
+	}
+	if !found {
+		if len(s.state.Providers) >= 16 {
+			return errors.New("maximum 16 external providers")
+		}
+		if p.APIKey == "" {
+			return errors.New("API key is required for a new provider")
+		}
+		s.state.Providers = append(s.state.Providers, p)
+	}
+	if err := validateExternalProvider(p); err != nil {
+		s.state.Providers = before
+		return err
+	}
+	if err := s.saveLocked(); err != nil {
+		s.state.Providers = before
+		return err
+	}
+	return nil
+}
+
+func (s *Store) deleteProvider(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	before := append([]ExternalProvider(nil), s.state.Providers...)
+	for i, p := range s.state.Providers {
+		if p.ID == id {
+			s.state.Providers = append(s.state.Providers[:i], s.state.Providers[i+1:]...)
+			if err := s.saveLocked(); err != nil {
+				s.state.Providers = before
+				return err
+			}
+			return nil
+		}
+	}
+	return errors.New("provider not found")
 }
 
 func (s *Store) saveCredential(c *Credential) error {
