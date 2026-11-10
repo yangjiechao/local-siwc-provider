@@ -93,9 +93,67 @@ func (u *UpdateManager) githubJSON(ctx context.Context, path string, into any) e
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return fmt.Errorf("GitHub HTTP %d (network or rate limit)", r.StatusCode)
+		// GitHub's REST API may return HTTP 403 on the unauthenticated
+		// 60-request/hour quota. Preserve its diagnostic rather than labelling
+		// every forbidden response as a network error.
+		payload, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+		var failure struct { Message string `json:"message"` }
+		_ = json.Unmarshal(payload, &failure)
+		message := strings.TrimSpace(failure.Message)
+		if r.Header.Get("X-RateLimit-Remaining") == "0" {
+			message = "GitHub REST API 请求额度已耗尽；使用 Git 克隆安装时可通过 git fetch 避开此限制"
+		}
+		if message == "" {
+			message = http.StatusText(r.StatusCode)
+		}
+		if len(message) > 250 { message = message[:250] }
+		return fmt.Errorf("GitHub HTTP %d: %s", r.StatusCode, message)
 	}
 	return json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(into)
+}
+
+// gitLatest avoids GitHub's unauthenticated REST API quota on standard
+// installations. An eligible clone fetches the pinned origin into FETCH_HEAD
+// without changing the checked-out files; other installations can at least
+// display the current public branch SHA via ls-remote.
+func (u *UpdateManager) gitLatest(ctx context.Context, eligible bool) (sha, date string, err error) {
+	if eligible {
+		if _, err := gitCmd(ctx, u.repoDir, "fetch", "--no-tags", "origin", "main"); err != nil {
+			return "", "", fmt.Errorf("Git 检查远端提交失败：%w", err)
+		}
+		sha, err = gitCmd(ctx, u.repoDir, "rev-parse", "FETCH_HEAD")
+		if err != nil { return "", "", err }
+		if !commitIDPattern.MatchString(sha) { return "", "", errors.New("Git fetch returned invalid commit SHA") }
+		date, _ = gitCmd(ctx, u.repoDir, "show", "-s", "--format=%cI", sha)
+		return sha, date, nil
+	}
+	out, err := gitCmd(ctx, u.repoDir, "ls-remote", "--heads", githubRepoWeb+".git", "refs/heads/main")
+	if err != nil { return "", "", fmt.Errorf("无法通过 Git 获取最新版本：%w", err) }
+	fields := strings.Fields(out)
+	if len(fields) != 2 || fields[1] != "refs/heads/main" || !commitIDPattern.MatchString(fields[0]) {
+		return "", "", errors.New("Git ls-remote did not return the official main branch")
+	}
+	return fields[0], "", nil
+}
+
+// compareGit compares locally fetched commits without another GitHub API call.
+// The labels mirror the GitHub compare endpoint used by test/API fallback.
+func (u *UpdateManager) compareGit(ctx context.Context, local, latest string) (string, int, error) {
+	if local == latest { return "identical", 0, nil }
+	if !commitIDPattern.MatchString(local) || !commitIDPattern.MatchString(latest) {
+		return "", 0, errors.New("无法比较无效的 Git 提交")
+	}
+	if _, err := gitCmd(ctx, u.repoDir, "merge-base", "--is-ancestor", local, latest); err == nil {
+		countStr, err := gitCmd(ctx, u.repoDir, "rev-list", "--count", local+".."+latest)
+		if err != nil { return "", 0, err }
+		var n int
+		if _, err := fmt.Sscanf(countStr, "%d", &n); err != nil { return "", 0, err }
+		return "ahead", n, nil
+	}
+	if _, err := gitCmd(ctx, u.repoDir, "merge-base", "--is-ancestor", latest, local); err == nil {
+		return "behind", 0, nil
+	}
+	return "diverged", 0, nil
 }
 
 func shortID(id string) string {
@@ -181,21 +239,42 @@ func (u *UpdateManager) Check(ctx context.Context) UpdateSnapshot {
 	u.state.Message = "正在查询 GitHub 最新提交…"
 	u.state.CanUpdate = false
 	u.mu.Unlock()
+
 	var latest struct {
-		SHA    string `json:"sha"`
+		SHA string `json:"sha"`
 		Commit struct {
-			Committer struct {
-				Date string `json:"date"`
-			} `json:"committer"`
+			Committer struct { Date string `json:"date"` } `json:"committer"`
 		} `json:"commit"`
 	}
-	err := u.githubJSON(ctx, "/commits/main", &latest)
+	// A real installation uses the Git protocol and local ancestry checks.
+	// The injected HTTP endpoint is retained for isolated contract tests.
+	usingGit := u.apiURL == githubRepoAPI
+	sourceErr := u.checkSource(ctx)
+	var err error
+	if usingGit {
+		var sha, date string
+		sha, date, err = u.gitLatest(ctx, sourceErr == nil)
+		if err == nil {
+			latest.SHA = sha
+			latest.Commit.Committer.Date = date
+		} else {
+			// Git may be missing or blocked. REST remains a diagnostic fallback.
+			gitErr := err
+			err = u.githubJSON(ctx, "/commits/main", &latest)
+			if err != nil { err = fmt.Errorf("Git 更新检查失败：%v；REST 备用查询失败：%w", gitErr, err) }
+			usingGit = false
+		}
+	} else {
+		err = u.githubJSON(ctx, "/commits/main", &latest)
+	}
+
 	status, msg, can := "error", "", false
 	if err == nil && !commitIDPattern.MatchString(latest.SHA) {
 		err = errors.New("GitHub 返回的提交号无效")
 	}
 	if err == nil {
-		sourceErr := u.checkSource(ctx)
+		// Recheck after network access in case a user changed the checkout.
+		sourceErr = u.checkSource(ctx)
 		switch {
 		case sourceErr != nil:
 			status = "manual"
@@ -205,10 +284,23 @@ func (u *UpdateManager) Check(ctx context.Context) UpdateSnapshot {
 			msg = "已经是 GitHub main 最新版本。"
 		default:
 			var diff struct {
-				Status  string `json:"status"`
-				AheadBy int    `json:"ahead_by"`
+				Status string `json:"status"`
+				AheadBy int `json:"ahead_by"`
 			}
-			err = u.githubJSON(ctx, "/compare/"+u.state.LocalCommit+"..."+latest.SHA, &diff)
+			if usingGit {
+				diff.Status, diff.AheadBy, err = u.compareGit(ctx, u.state.LocalCommit, latest.SHA)
+			} else {
+				err = u.githubJSON(ctx, "/compare/"+u.state.LocalCommit+"..."+latest.SHA, &diff)
+				if err != nil && u.apiURL == githubRepoAPI {
+					// A valid public Git clone can still compare locally if the
+					// secondary GitHub REST endpoint is rate limited.
+					var fetchErr error
+					_, _, fetchErr = u.gitLatest(ctx, true)
+					if fetchErr == nil {
+						diff.Status, diff.AheadBy, err = u.compareGit(ctx, u.state.LocalCommit, latest.SHA)
+					}
+				}
+			}
 			if err == nil {
 				switch diff.Status {
 				case "ahead":
@@ -228,9 +320,7 @@ func (u *UpdateManager) Check(ctx context.Context) UpdateSnapshot {
 			}
 		}
 	}
-	if err != nil {
-		msg = err.Error()
-	}
+	if err != nil { msg = err.Error() }
 	u.setState(func(s *UpdateSnapshot) {
 		s.LatestCommit = latest.SHA
 		s.LatestDate = latest.Commit.Committer.Date

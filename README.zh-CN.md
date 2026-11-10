@@ -105,3 +105,10 @@ Agent 的 `base_url` 仍然是 `http://127.0.0.1:8087/v1`。模型 ID 推荐 `�
 **给开源使用者的提醒：** 仅限同一被授权应用自身使用 SIWC 的 ChatGPT 套餐；如果将本项目连接到其他无关 Agent、公开出售订阅额度或为他人转发推理，就可能违反 SIWC 的“Connected application only”等要求。请务必阅读 [NOTICE-SIWC-COMPLIANCE.md](NOTICE-SIWC-COMPLIANCE.md) 并自行评估、必要时联系 OpenAI 确认。
 
 **参数兼容提醒：** 调用 SIWC 时可携带 `max_output_tokens`，Provider 会删除此字段，不会因此报错，但输出 Token 上限**不会实际生效**。发送给独立模型商时，除去路由前缀外不会自动剥离此字段，具体由该供应商决定是否支持。
+
+
+### 遇到 GitHub HTTP 403 时
+
+新版的更新检查对于官方 Git 克隆安装优先执行 `git fetch` 并在本地比较提交，不再默认使用未经认证的 GitHub REST API（可能触发每小时额度限制）。无须填写 GitHub Personal Access Token。未满足一键更新要求的安装，会尽量用 `git ls-remote` 展示远端提交；无法使用 Git 时才尝试 REST API，并显示更明确的错误。
+
+若仍提示 Git 连接错误，请在仓库目录中执行 `git fetch origin main` 查看原始网络报错，检查代理、DNS 或网络配置。**不要把 GitHub Token 填入 Provider 的 Agent API Key 或模型供应商 Key 栏。**

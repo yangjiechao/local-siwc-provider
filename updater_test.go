@@ -158,3 +158,53 @@ func TestDashboardIncludesUpdaterControls(t *testing.T) {
 		}
 	}
 }
+
+
+func TestGitLatestAndCompareWithoutGitHubAPI(t *testing.T) {
+	u, local := repoFixture(t)
+	ctx := context.Background()
+	cmd := func(dir string, args ...string) string {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		output, err := c.CombinedOutput()
+		if err != nil { t.Fatalf("git %v: %v (%s)", args, err, output) }
+		return strings.TrimSpace(string(output))
+	}
+	remote := filepath.Join(t.TempDir(), "upstream.git")
+	cmd(u.repoDir, "init", "--bare", remote)
+	cmd(u.repoDir, "remote", "set-url", "origin", remote)
+	cmd(u.repoDir, "push", "origin", "main")
+	other := filepath.Join(t.TempDir(), "other")
+	cmd(u.repoDir, "clone", "--branch", "main", remote, other)
+	cmd(other, "config", "user.name", "Updater Test")
+	cmd(other, "config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(other, "change.txt"), []byte("new"), 0600); err != nil { t.Fatal(err) }
+	cmd(other, "add", "change.txt")
+	cmd(other, "commit", "-m", "new upstream version")
+	want := cmd(other, "rev-parse", "HEAD")
+	cmd(other, "push", "origin", "main")
+
+	latest, date, err := u.gitLatest(ctx, true)
+	if err != nil { t.Fatal(err) }
+	if latest != want || date == "" { t.Fatalf("fetched %q, date %q, expected %q", latest, date, want) }
+	status, count, err := u.compareGit(ctx, local, latest)
+	if err != nil || status != "ahead" || count != 1 { t.Fatalf("compare: %s %d %v", status, count, err) }
+	latest, _, err = u.gitLatest(ctx, true)
+	if err != nil || latest != want { t.Fatalf("repeat fetch: %q %v", latest, err) }
+}
+
+func TestGitHub403ExplainsRateLimit(t *testing.T) {
+	u, _ := repoFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+	}))
+	defer server.Close()
+	u.apiURL = server.URL
+	u.client = server.Client()
+	var payload map[string]any
+	err := u.githubJSON(context.Background(), "/commits/main", &payload)
+	if err == nil || !strings.Contains(err.Error(), "额度已耗尽") { t.Fatalf("missing actionable rate limit error: %v", err) }
+}
