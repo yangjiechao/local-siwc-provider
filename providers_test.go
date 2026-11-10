@@ -274,29 +274,29 @@ func TestDashboardProviderEndpointsAreProtected(t *testing.T) {
 	server.dashboard = newDashboard(server)
 	admin := server.AdminHandler()
 	// Unauthorized callers cannot read or mutate provider credentials.
-	w := dashboardTestRequest(t, admin, "GET", "/ui/api/providers", nil, nil, false, "")
+	w := providerDashboardRequest(t, admin, "GET", "/ui/api/providers", nil, nil, false, "")
 	if w.Code != 401 {
 		t.Fatalf("unauthorized provider listing HTTP %d", w.Code)
 	}
-	w = dashboardTestRequest(t, admin, "POST", "/ui/api/providers", ExternalProvider{ID: "mock", Name: "Mock", Kind: "openai-compatible", BaseURL: "https://example.com", APIKey: "secret", Enabled: true}, nil, true, "")
+	w = providerDashboardRequest(t, admin, "POST", "/ui/api/providers", ExternalProvider{ID: "mock", Name: "Mock", Kind: "openai-compatible", BaseURL: "https://example.com", APIKey: "secret", Enabled: true}, nil, true, "")
 	if w.Code != 401 {
 		t.Fatalf("unauthorized provider update HTTP %d", w.Code)
 	}
-	w = dashboardTestRequest(t, admin, "POST", "/ui/api/session", map[string]string{"key": store.get().AdminKey}, nil, true, "")
+	w = providerDashboardRequest(t, admin, "POST", "/ui/api/session", map[string]string{"key": store.get().AdminKey}, nil, true, "")
 	if w.Code != 200 || len(w.Result().Cookies()) == 0 {
 		t.Fatalf("admin session failed: %s", w.Body.String())
 	}
 	cookie := w.Result().Cookies()[0]
 	p := ExternalProvider{ID: "mock", Name: "Mock Provider", Kind: "openai-compatible", BaseURL: "https://example.com", APIKey: "secret", Enabled: true, ManualModels: []string{"m"}}
-	w = dashboardTestRequest(t, admin, "POST", "/ui/api/providers", p, cookie, false, "")
+	w = providerDashboardRequest(t, admin, "POST", "/ui/api/providers", p, cookie, false, "")
 	if w.Code != 403 {
 		t.Fatalf("provider mutation without CSRF allowed: %d", w.Code)
 	}
-	w = dashboardTestRequest(t, admin, "POST", "/ui/api/providers", p, cookie, true, "")
+	w = providerDashboardRequest(t, admin, "POST", "/ui/api/providers", p, cookie, true, "")
 	if w.Code != 200 {
 		t.Fatalf("provider creation HTTP %d: %s", w.Code, w.Body.String())
 	}
-	w = dashboardTestRequest(t, admin, "GET", "/ui/api/providers", nil, cookie, false, "")
+	w = providerDashboardRequest(t, admin, "GET", "/ui/api/providers", nil, cookie, false, "")
 	if w.Code != 200 || strings.Contains(w.Body.String(), `"api_key"`) || strings.Contains(w.Body.String(), "secret") {
 		t.Fatalf("provider secret leaked to dashboard list: %s", w.Body.String())
 	}
@@ -308,4 +308,34 @@ func TestDashboardProviderEndpointsAreProtected(t *testing.T) {
 	if apiRes.Code != 404 {
 		t.Fatalf("dashboard endpoint exposed to Agent API: %d", apiRes.Code)
 	}
+}
+
+// Independent fixture: the dashboard tests in older branches may name their
+// helper differently. Avoid coupling provider tests to that private helper.
+func providerDashboardRequest(t *testing.T, handler http.Handler, method, path string, body any, cookie *http.Cookie, adminHeader bool, origin string) *httptest.ResponseRecorder {
+	t.Helper()
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(method, "http://127.0.0.1:8787"+path, bytes.NewReader(data))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if adminHeader {
+		req.Header.Set(dashboardHeader, "1")
+	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w
 }
