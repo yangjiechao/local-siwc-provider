@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Local SIWC Provider · 控制台</title>
+  <link rel="stylesheet" href="/ui/app.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brandmark" aria-hidden="true">S</span><div><strong>Local SIWC</strong><small>PROVIDER CONSOLE</small></div></div>
+      <div class="top-actions"><span class="dev-pill"><span class="dot"></span> 本机控制台</span><a href="https://github.com/yangjiechao/local-siwc-provider" target="_blank" rel="noreferrer noopener">GitHub <span aria-hidden="true">↗</span></a></div>
+    </header>
+
+    <section id="lockScreen" class="lock" hidden>
+      <div class="lock-icon">🔐</div><h1>打开本地控制台</h1>
+      <p>为防止其他程序读取你的登录状态和本地 API Key，控制台仅允许从本机启动器解锁。</p>
+      <p class="command">./siwc-provider ui</p>
+      <p class="hint">也可以双击仓库里的 <code>start.command</code>（macOS）。不要共享启动器生成的专用链接。</p>
+      <button type="button" class="btn ghost" id="retryUnlock">重试连接</button>
+    </section>
+
+    <div id="content" hidden>
+      <section class="hero">
+        <div class="hero-text"><div class="eyebrow"><span class="spark"></span> SELF-HOSTED CONTROL PLANE · 0.2 DEV PREVIEW</div><h1>连接模型，<br><em>让 Agent 专注执行。</em></h1>
+          <p>在一处完成 ChatGPT 授权、API 服务管理和模型发现。你的 OAuth 凭据只存于本机，不经由第三方中转。</p>
+          <div class="hero-row"><span id="accountBadge" class="pill muted">未授权</span><span id="serviceBadge" class="pill muted">API 已停止</span></div>
+        </div>
+        <div class="hero-art" aria-hidden="true"><span class="halo h1"></span><span class="halo h2"></span><span class="halo h3"></span><div class="orb"><span>⌘</span></div><span class="orbit-node n1"></span><span class="orbit-node n2"></span><span class="orbit-node n3"></span></div>
+      </section>
+
+      <section class="steps-heading"><div><div class="overline">QUICK SETUP</div><h2>四步完成接入</h2><p>按顺序操作；已完成的步骤会自动显示状态。</p></div><span class="tiny-note">LOCALHOST ONLY · 127.0.0.1</span></section>
+      <div class="cards">
+        <section class="panel" aria-labelledby="loginTitle"><div class="panel-top"><span class="step-num">01</span><span class="panel-symbol">◎</span></div><h3 id="loginTitle">授权 ChatGPT</h3><p class="desc">通过 OpenAI 官方网页登录你自己的 ChatGPT 账号。</p>
+          <div class="info-box"><div class="info-label">账号状态</div><strong id="loginState">尚未登录</strong><small id="loginDetail">首次授权需要浏览器确认。</small></div>
+          <button type="button" id="loginBtn" class="btn primary">使用 ChatGPT 登录 <span>↗</span></button>
+          <a id="oauthLink" class="aux-link" href="#" target="_blank" rel="noopener noreferrer" hidden>没自动弹出？手动打开授权页面 ↗</a>
+          <button type="button" id="logoutBtn" class="btn text-button" hidden>退出授权</button>
+        </section>
+
+        <section class="panel" aria-labelledby="serviceTitle"><div class="panel-top"><span class="step-num">02</span><span class="panel-symbol">⏻</span></div><h3 id="serviceTitle">启停本地 API</h3><p class="desc">网页始终可管理；启动 API 后 Agent 才能调用模型。</p>
+          <div class="info-box"><div class="info-label">服务状态</div><strong id="serviceState">API 已停止</strong><small id="serviceDetail">请先完成账号授权。</small></div>
+          <button type="button" id="toggleServiceBtn" class="btn dark" disabled>启动 API 服务 <span>→</span></button>
+          <span class="subline">服务地址：<code>127.0.0.1:8787</code></span>
+        </section>
+
+        <section class="panel" aria-labelledby="keyTitle"><div class="panel-top"><span class="step-num">03</span><span class="panel-symbol">⌁</span></div><h3 id="keyTitle">获取本地 API Key</h3><p class="desc">这不是 ChatGPT Token，只用于你的 Agent 访问本地 Provider。</p>
+          <div class="key-box"><span id="keyValue">•••• •••• •••• ••••</span><button id="revealKeyBtn" type="button" class="icon-btn" title="显示或隐藏本地 Key" aria-label="显示或隐藏本地 Key">◉</button></div>
+          <button type="button" id="copyKeyBtn" class="btn outline">复制本地 Key <span>⧉</span></button>
+          <span class="subline">敏感凭据仅在你主动查看时读取。</span>
+        </section>
+
+        <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
+          <div class="info-box"><div class="info-label">模型目录</div><strong id="modelCount">尚未查询</strong><small id="modelDetail">登录后点击刷新。</small></div>
+          <button type="button" id="refreshModelsBtn" class="btn outline" disabled>刷新模型列表 <span>↻</span></button>
+          <span class="subline">会直接请求 OpenAI 的模型目录。</span>
+        </section>
+      </div>
+
+      <section class="lower-grid">
+        <div class="panel wide"><div class="section-header"><div><div class="overline">AGENT CONNECTION</div><h2>连接你的 Agent</h2></div><span class="tag">OPENAI COMPATIBLE</span></div>
+          <p class="subheading">在 Harness 的配置中填写以下参数，Provider 不会修改你的 Agent 代码。</p>
+          <div class="settings"><div class="setting"><div class="setting-name">Base URL</div><code id="baseURL">http://127.0.0.1:8787/v1</code><button class="copy-mini" data-copy="base" type="button">复制</button></div>
+            <div class="setting"><div class="setting-name">API Key</div><code>使用上方生成的本地 Key</code><button class="copy-mini" data-copy="key" type="button">复制</button></div>
+            <div class="setting"><div class="setting-name">Model</div><select id="modelSelect" aria-label="选择模型"><option value="">请先查询模型目录</option></select><button class="copy-mini" data-copy="model" type="button">复制</button></div>
+          </div>
+          <div class="config-actions"><button id="copyConfigBtn" class="btn dark" type="button">复制 Agent 配置 <span>⧉</span></button><span>适配支持情况取决于 Agent 的 SDK 和请求参数。</span></div>
+        </div>
+        <div class="panel mini-panel"><div class="overline">SERVICE INFO</div><h2>运行信息</h2><div class="fact"><span>绑定地址</span><strong>127.0.0.1</strong></div><div class="fact"><span>监听端口</span><strong id="portFact">8787</strong></div><div class="fact"><span>登录账号</span><strong id="accountFact">未登录</strong></div><div class="fact"><span>Token 过期</span><strong id="expiryFact">—</strong></div><div class="fact"><span>上游</span><strong>Responses API</strong></div>
+          <div class="notice"><span>ⓘ</span><p>这是开发预览版。实际 SIWC 资格、模型权限和复杂工具调用还需要实测。</p></div></div>
+      </section>
+
+      <footer><div><span class="brandmark tiny">S</span> Local SIWC Provider <span class="footer-sep">/</span> 本地运行 · 不上传凭据</div><button type="button" id="lockBtn" class="footer-action">锁定此控制台</button></footer>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </main>
+</body>
+</html>
