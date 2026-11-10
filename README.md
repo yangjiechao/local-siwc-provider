@@ -1,5 +1,24 @@
 # Local SIWC Provider
 
+**[简体中文：本地网页控制台使用指南](README.zh-CN.md)**
+
+## Web dashboard (new in 0.2 preview)
+
+No need to run separate login, status, serve, key and models commands. The localhost browser console now handles ChatGPT authorization, API start/stop, key reveal/copy, model discovery and agent configuration copying.
+
+**macOS:** Install Go 1.23+ once, clone this repository, then **double-click `start.command`** in Finder. If Gatekeeper blocks a downloaded script, right-click and choose **Open**. The script builds the executable and opens the local browser console.
+
+**Other platforms or terminal users:**
+
+```bash
+go run . ui --port 8787
+```
+
+The management dashboard is on `http://127.0.0.1:8787/ui/`, while compatible agents connect to `http://127.0.0.1:8787/v1`. Keep the local process running while using it. The dashboard has a separate administrator key and an authenticated, same-origin browser session; the agent's Bearer key is never used to unlock the administrator dashboard.
+
+> This is still an experimental preview. Real SIWC OAuth, plan eligibility, and complex Harness tool-calling require live testing. Open source does not automatically authorize relaying subscription access to arbitrary closed-source agents.
+
+
 An **experimental**, single-user, localhost-only Go adapter for [Sign in with ChatGPT (SIWC)](https://developers.openai.com/siwc/quickstart) and OpenAI's public **Responses API**. It enables eligible clients to authenticate with ChatGPT and supplies a limited OpenAI-compatible interface for local tools.
 
 > **Preview / not yet live-verified.** The OAuth, function-namespace, SSE, and Chat Completions mapping implementation has local unit tests, but it has **not** been authenticated against a real ChatGPT account or tested with a production Harness. Do not interpret publication or a working OAuth callback as OpenAI approval for all downstream uses. In particular, whether a generic OSS adapter can relay subscription usage to independent private agents is a policy/authorization question that must be confirmed before deployment. No bypass or account pooling is included.
@@ -76,7 +95,7 @@ The adapter always sends `store:false,stream:true` to the upstream SIWC route. I
 - OAuth tokens remain local. The command `key` intentionally reveals *only* the randomly generated **local key**, upon user request. Do not screenshot or publish it.
 - Redirects are disabled on HTTP clients; OIDC `jwks_uri` and `revocation_endpoint` must resolve to `auth.openai.com` over HTTPS.
 - Returning sign-in reuses the issued `client_id`; the retained ID-token hint is not put in printed URLs. `logout` attempts OIDC refresh-token revocation and preserves the account registration mapping.
-- Local HTTP requests require a Bearer key, reject requests containing an `Origin` header, and verify loopback Host. Public browser integrations and multi-device use are intentionally unsupported.
+- Agent API routes require a Bearer key, reject requests containing an `Origin` header, and verify loopback Host. Browser dashboard routes use a separate authenticated session and anti-CSRF checks. Public browser integrations and multi-device use are intentionally unsupported.
 - Strict Chat Completions compatibility only. **Unsupported model parameters are rejected explicitly** (including `temperature`, `max_completion_tokens`, `response_format`, etc.). No fabricated JSON mode, false max-token guarantee, previous-response continuation, or hosted tools.
 - The adapter translates text and local function tools; advanced multi-step reasoning items, audio/video, and full multimodal history are **not** preserved in Chat Completions mode. For complex reasoning, prefer native `/v1/responses`.
 - SSE fails closed for aggregated calls unless `response.completed` arrives. Raw streaming follows upstream events and the caller must check the terminal status. Unexpected streaming failures cannot retroactively change an HTTP 200 status.
