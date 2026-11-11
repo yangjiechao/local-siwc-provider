@@ -44,6 +44,7 @@ async function unlock() {
   try {
     unlocked = true;
     await fetchStatus();
+    await loadProviderPresets();
     await loadProviders();
     $('lockScreen').hidden = true;
     $('content').hidden = false;
@@ -319,45 +320,162 @@ setInterval(async () => {
   }
 }, 1400);
 
-// External provider management: never fetch or render stored upstream API keys.
+// External providers use a server-provided, fixed preset catalog.
+// Never store or display vendor secrets, or construct icon URLs from user data.
+let providerPresets = [];
+let editingProvider = null;
+const LOCAL_KIND = 'local-openai-compatible';
+const CUSTOM_CHOICES = {
+  'custom-cloud': {kind:'openai-compatible', label:'自定义云端 OpenAI 兼容 API'},
+  'custom-local': {kind:LOCAL_KIND, label:'自定义本地或局域网模型服务'},
+  'custom-video': {kind:'ark-video', label:'自定义 Ark Video API'}
+};
+function findPreset(id) { return providerPresets.find(p=>p.id===id) || null; }
+function resolvedPreset(item) {
+  if (item.preset && findPreset(item.preset)) return item.preset;
+  const match=providerPresets.find(p=>p.kind===item.kind && p.base_url===item.base_url);
+  if (match) return match.id;
+  return item.kind===LOCAL_KIND?'custom-local':item.kind==='ark-video'?'custom-video':'custom-cloud';
+}
+function makeBrandLogo(name, fallback) {
+  const logo=document.createElement('span');logo.className='provider-avatar';
+  logo.setAttribute('aria-hidden','true');
+  const letter=document.createElement('span');letter.className='provider-avatar-fallback';
+  letter.textContent=(fallback||'?').trim().slice(0,2).toUpperCase() || '?';
+  logo.append(letter);
+  const known=['openai','deepseek','openrouter','groq','xai','qwen','volcengine','ollama','lmstudio','vllm'];
+  if (known.includes(name)) {
+    const img=document.createElement('img');img.alt='';img.loading='lazy';
+    img.src='/ui/assets/logos/'+name+'.svg';
+    img.addEventListener('error',()=>{img.hidden=true;letter.hidden=false;});
+    letter.hidden=true;logo.prepend(img);
+  }
+  return logo;
+}
+function paintPresetPreview() {
+  const choice=$('providerPreset').value;
+  const preset=findPreset(choice);
+  const custom=CUSTOM_CHOICES[choice];
+  const isCustom=!!custom;
+  const kind=preset?.kind || custom?.kind || '';
+  $('providerKind').value=kind;
+  $('providerBaseField').hidden=!isCustom;
+  $('providerBase').required=isCustom;
+  $('providerPresetPreview').hidden=!preset;
+  if (preset) {
+    $('providerPresetTitle').textContent=preset.name;
+    $('providerPresetURL').textContent=preset.base_url;
+    const holder=$('providerPresetLogo');holder.replaceChildren();
+    holder.replaceWith(makeBrandLogo(preset.logo,preset.name));
+    // Replace with an element carrying the stable ID for the next selection.
+    $('providerPresetPreview').querySelector('.provider-avatar').id='providerPresetLogo';
+    $('providerBase').value=preset.base_url;
+  }
+  const oldURL=editingProvider?.base_url || '';
+  $('providerKey').required=kind!==LOCAL_KIND && (!editingProvider || (preset?.base_url||$('providerBase').value)!==oldURL);
+  $('providerKey').placeholder=kind===LOCAL_KIND?'本地服务器无认证时可留空':'新建必填；编辑保持原地址时可留空';
+  $('providerSecurityHint').textContent=kind===LOCAL_KIND
+    ? '本地服务无需付费云端 API Key。仅允许明确指定的回环/私有网络地址；若连接另一台电脑，请在「自定义本地」填写其私有 IP:端口，并保证网络可信。'
+    :kind==='ark-video'
+      ? '视频任务需通过 Ark Video API 调用，具体模型和地域以服务商官方权限为准。'
+      :kind==='openai-compatible'
+        ? '云端服务只允许公网 HTTPS，使用该厂商独立 API Key 和计费规则，不会自动切换到 SIWC。'
+        :'请先选择模型商。';
+}
 function resetProviderForm() {
+  editingProvider=null;
   $('providerForm').reset();
-  $('providerId').readOnly = false;
-  $('providerKey').value = '';
-  $('providerKey').required = true;
-  $('saveProviderBtn').textContent = '保存模型商';
-  $('providerEnabled').checked = true;
+  $('providerId').readOnly=false;
+  $('providerKey').value='';
+  $('providerKey').required=false;
+  $('saveProviderBtn').textContent='保存模型商';
+  $('providerEnabled').checked=true;
+  $('providerBase').value='';
+  $('providerKind').value='';
+  $('providerBaseField').hidden=true;
+  $('providerPresetPreview').hidden=true;
 }
 function openProviderDialog(item=null) {
   resetProviderForm();
+  editingProvider=item;
   if (item) {
-    $('providerId').value=item.id; $('providerId').readOnly=true;
-    $('providerName').value=item.name; $('providerKind').value=item.kind;
-    $('providerBase').value=item.base_url; $('providerKey').value='';
-    $('providerModels').value=(item.manual_models || []).join('\n');
+    $('providerPreset').value=resolvedPreset(item);
+    $('providerId').value=item.id;$('providerId').readOnly=true;
+    $('providerName').value=item.name;
+    $('providerBase').value=item.base_url;
+    $('providerModels').value=(item.manual_models||[]).join('\n');
     $('providerEnabled').checked=item.enabled;
-    $('providerKey').required=false;
     $('providerDialogTitle').textContent='编辑模型商 · '+item.name;
     $('saveProviderBtn').textContent='保存修改';
   } else {
     $('providerDialogTitle').textContent='新增模型商';
   }
+  paintPresetPreview();
+  // Legacy records that happen to have a known URL keep their saved data.
+  if (item) $('providerBase').value=item.base_url;
   $('providerDialog').showModal();
-  $('providerId').focus();
+  $('providerPreset').focus();
 }
 function closeProviderDialog() {
   if ($('providerDialog').open) $('providerDialog').close();
 }
-function providerButton(label, fn) {
-  const b=document.createElement('button');b.type='button';b.className='btn outline';b.textContent=label;
-  b.addEventListener('click', fn);return b;
+function providerButton(label,fn) {
+  const button=document.createElement('button');button.type='button';
+  button.className='btn outline';button.textContent=label;
+  button.addEventListener('click',fn);return button;
+}
+function selectProviderPreset(value) {
+  const preset=findPreset(value);
+  if (!editingProvider) {
+    if (preset) {
+      $('providerId').value=preset.id;
+      $('providerName').value=preset.name;
+    } else if (CUSTOM_CHOICES[value]) {
+      $('providerId').value='';
+      $('providerName').value='';
+    }
+  }
+  if (CUSTOM_CHOICES[value]) {
+    $('providerBase').value=editingProvider?.base_url || '';
+  }
+  paintPresetPreview();
+}
+async function loadProviderPresets() {
+  const el=$('providerPreset');
+  try {
+    const data=await call('provider-presets');
+    providerPresets=Array.isArray(data.presets)?data.presets:[];
+  } catch(err) {
+    providerPresets=[];
+    toast('预设列表加载失败，可以使用自定义地址：'+err.message);
+  }
+  el.replaceChildren();
+  const placeholder=document.createElement('option');
+  placeholder.value='';placeholder.textContent='请选择模型商或本地服务…';el.append(placeholder);
+  for (const category of [{id:'cloud',title:'云端模型厂商'},{id:'local',title:'本地推理服务'}]) {
+    const group=document.createElement('optgroup');group.label=category.title;
+    for (const p of providerPresets.filter(p=>p.category===category.id)) {
+      const option=document.createElement('option');option.value=p.id;option.textContent=p.name;
+      group.append(option);
+    }
+    if (category.id==='cloud') {
+      for (const id of ['custom-cloud','custom-video']) {
+        const option=document.createElement('option');option.value=id;option.textContent='＋ '+CUSTOM_CHOICES[id].label;
+        group.append(option);
+      }
+    } else {
+      const option=document.createElement('option');option.value='custom-local';
+      option.textContent='＋ '+CUSTOM_CHOICES['custom-local'].label;group.append(option);
+    }
+    el.append(group);
+  }
 }
 function renderProviders() {
   const host=$('providerList');host.replaceChildren();
   const count=configuredProviders.length,enabled=configuredProviders.filter(x=>x.enabled).length;
   $('providerSummary').textContent=count?count+' 个模型商 · '+enabled+' 个已启用':'尚未配置额外模型商';
   const q=$('providerSearch').value.trim().toLocaleLowerCase();
-  const filtered=configuredProviders.filter(x=>(x.id+' '+x.name+' '+x.kind).toLocaleLowerCase().includes(q));
+  const filtered=configuredProviders.filter(x=>(x.id+' '+x.name+' '+x.kind+' '+x.base_url).toLocaleLowerCase().includes(q));
   if (!filtered.length) {
     const p=document.createElement('p');p.className='provider-empty';
     p.textContent=count?'没有符合搜索条件的模型商。':'暂无额外模型商，点击「新增模型商」添加。';
@@ -365,76 +483,97 @@ function renderProviders() {
   }
   for (const item of filtered) {
     const row=document.createElement('div');row.className='provider-entry';
-    const info=document.createElement('div');
-    const name=document.createElement('div');name.className='name';name.textContent=`${item.name} (${item.id}) ${item.enabled ? '· 已启用' : '· 已禁用'}`;
+    const info=document.createElement('div');info.className='provider-identity';
+    const titleArea=document.createElement('div');titleArea.className='provider-identity-text';
+    const name=document.createElement('div');name.className='name';
+    name.textContent=item.name+' ('+item.id+')';
+    const badge=document.createElement('span');badge.className='provider-status '+(item.enabled?'enabled':'disabled');
+    badge.textContent=item.enabled?'已启用':'已禁用';name.append(badge);
     const meta=document.createElement('div');meta.className='details';
-    meta.textContent=`${item.kind} · ${item.base_url} · ${item.models?.length || 0} 个模型 · ${item.has_api_key ? 'Key 已保存（不会回显）' : '缺少 Key'}`;
-    info.append(name,meta);
-    if (item.discovery_error) {const warn=document.createElement('div');warn.className='error';warn.textContent=`目录获取失败：${item.discovery_error}。可以手动填写模型 ID。`;info.append(warn);}
-    const actions=document.createElement('div');actions.className='provider-actions';
-    actions.append(providerButton(item.enabled?'禁用':'启用',()=>perform('切换模型商',async()=>{
-      const nowEnabled=!item.enabled;
-      await call('providers',{method:'POST',body:{
-        id:item.id,name:item.name,kind:item.kind,base_url:item.base_url,
-        api_key:'',enabled:nowEnabled,manual_models:item.manual_models||[]
-      }});
-      await loadProviders();await fetchStatus();
-      toast('模型商 '+item.name+' 已'+(nowEnabled?'启用':'禁用'));
-    })));
-    actions.append(providerButton('编辑',()=>openProviderDialog(item)));
-    actions.append(providerButton('删除', () => {
-      if (!confirm(`确定删除模型商 ${item.name}？该模型商的 API Key 也会从本机配置移除。`)) return;
-      perform('删除模型商',async()=>{
-        await call('providers/delete',{method:'POST',body:{id:item.id}});
-        await loadProviders();toast(`已删除 ${item.id}`);
-      });
-    }));
-    if (Array.isArray(item.models) && item.models.length) {
+    const label=item.kind===LOCAL_KIND?'本地推理':item.kind==='ark-video'?'视频 API':'云端 API';
+    meta.textContent=label+' · '+item.base_url+' · '+(item.models?.length||0)+' 个模型 · '+(item.kind===LOCAL_KIND&&!item.has_api_key?'无需 Key':item.has_api_key?'Key 已保存':'缺少 Key');
+    titleArea.append(name,meta);
+    if (item.discovery_error) {
+      const warn=document.createElement('div');warn.className='error';
+      warn.textContent='目录获取失败：'+item.discovery_error+'。可以手动填写模型 ID。';
+      titleArea.append(warn);
+    }
+    if (Array.isArray(item.models)&&item.models.length) {
       const models=document.createElement('details');models.className='provider-model-details';
       const summary=document.createElement('summary');summary.textContent='查看 '+item.models.length+' 个模型 ID';
       const values=document.createElement('div');values.className='provider-model-values';
-      for (const model of item.models) {const code=document.createElement('code');code.textContent=model;values.append(code);}
-      models.append(summary,values);info.append(models);
+      for(const m of item.models){const c=document.createElement('code');c.textContent=m;values.append(c);}
+      models.append(summary,values);titleArea.append(models);
     }
+    const preset=findPreset(resolvedPreset(item));
+    info.append(makeBrandLogo(preset?.logo,item.name),titleArea);
+    const actions=document.createElement('div');actions.className='provider-actions';
+    actions.append(providerButton(item.enabled?'禁用':'启用',()=>perform('切换模型商',async()=>{
+      const next=!item.enabled;
+      await call('providers',{method:'POST',body:{
+        id:item.id,name:item.name,kind:item.kind,base_url:item.base_url,preset:item.preset||'',
+        api_key:'',enabled:next,manual_models:item.manual_models||[]
+      }});
+      await loadProviders();await fetchStatus();
+      toast('模型商 '+item.name+' 已'+(next?'启用':'禁用'));
+    })));
+    actions.append(providerButton('编辑',()=>openProviderDialog(item)));
+    actions.append(providerButton('删除',()=>{
+      if(!confirm('确定删除模型商 '+item.name+'？其保存的 API Key 也将移除。'))return;
+      perform('删除模型商',async()=>{
+        await call('providers/delete',{method:'POST',body:{id:item.id}});
+        await loadProviders();toast('已删除 '+item.id);
+      });
+    }));
     row.append(info,actions);host.append(row);
   }
 }
 async function loadProviders(withModels=true) {
   if (!unlocked) return;
   const data=await call('providers');
-  configuredProviders=Array.isArray(data.providers) ? data.providers : [];
+  configuredProviders=Array.isArray(data.providers)?data.providers:[];
   renderProviders();
-  if (withModels && Array.isArray(data.models)) {
+  if (withModels&&Array.isArray(data.models)){
     modelList=data.models.map(x=>x.id).filter(Boolean);
-    modelsLoaded=true;
-    updateModels();
+    modelsLoaded=true;updateModels();
   }
 }
 $('addProviderBtn').addEventListener('click',()=>openProviderDialog());
 $('closeProviderBtn').addEventListener('click',closeProviderDialog);
 $('resetProviderBtn').addEventListener('click',closeProviderDialog);
 $('providerDialog').addEventListener('close',resetProviderForm);
+$('providerPreset').addEventListener('change',event=>selectProviderPreset(event.target.value));
+$('providerBase').addEventListener('input',()=>{
+  if (editingProvider) $('providerKey').required=$('providerKind').value!==LOCAL_KIND && $('providerBase').value!==editingProvider.base_url;
+});
 $('providerSearch').addEventListener('input',renderProviders);
-$('providerForm').addEventListener('submit', event=>{
+$('providerForm').addEventListener('submit',event=>{
   event.preventDefault();
   perform('保存模型商',async()=>{
     const id=$('providerId').value.trim();
+    const presetID=$('providerPreset').value;
+    const preset=findPreset(presetID);
+    const custom=CUSTOM_CHOICES[presetID];
+    if (!preset&&!custom) throw Error('请选择模型商');
+    const kind=preset?.kind||custom.kind;
+    const baseURL=preset?.base_url||$('providerBase').value.trim();
     const payload={
-      id,name:$('providerName').value.trim(),kind:$('providerKind').value,
-      base_url:$('providerBase').value.trim(),api_key:$('providerKey').value.trim(),
+      id,name:$('providerName').value.trim(),kind,
+      preset:preset?.id||'custom',base_url:baseURL,
+      api_key:$('providerKey').value.trim(),
       enabled:$('providerEnabled').checked,
       manual_models:$('providerModels').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)
     };
     await call('providers',{method:'POST',body:payload});
     closeProviderDialog();await loadProviders();await fetchStatus();
-    toast(`模型商 ${id} 已保存，后台正在同步模型目录`);
+    toast('模型商 '+id+' 已保存，后台正在同步模型目录');
   });
 });
 $('refreshProvidersBtn').addEventListener('click',()=>perform('刷新模型',async()=>{
   const data=await call('providers/refresh',{method:'POST',body:{}});
-  modelList=Array.isArray(data.models) ? data.models.map(m=>m.id).filter(Boolean) : [];
+  modelList=Array.isArray(data.models)?data.models.map(m=>m.id).filter(Boolean):[];
   modelsLoaded=true;updateModels();await loadProviders(false);
-  toast(`刷新完成，共 ${modelList.length} 个模型`);
+  toast('刷新完成，共 '+modelList.length+' 个模型');
 }));
 
 // The backend refreshes model catalogs at startup. Reflect the result without

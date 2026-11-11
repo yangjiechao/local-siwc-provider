@@ -66,7 +66,7 @@
       </div>
 
       <section class="panel provider-panel" aria-labelledby="providerTitle">
-        <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">添加自己的独立 API Key。支持 DeepSeek 等 OpenAI 兼容模型商、外部 Images API（文生图 / 图片编辑），以及火山方舟 Seedance 视频任务。启动时会尝试获取各模型商的可用模型。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
+        <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">先选云厂商或本地推理服务，再配置模型。自动填写官方 API 地址，只有自定义服务需要输入 URL；厂商 Logo 与模型目录会一起显示。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
         <div class="notice"><span>⚠</span><p><strong>重要合规提示：</strong> SIWC 订阅仅允许授权应用自身使用，不能因为本软件开源就转售、共享订阅或为其他无关工具提供通用 ChatGPT API。额外模型商使用你单独购买或申请的 API Key，按各自条款计费；不要使用多账号绕过限额。详见 <a href="https://github.com/yangjiechao/local-siwc-provider/blob/main/NOTICE-SIWC-COMPLIANCE.md" target="_blank" rel="noopener noreferrer">合规与风险声明</a>。</p></div>
         <div class="provider-toolbar">
           <div class="provider-toolbar-info"><strong id="providerSummary">尚未配置额外模型商</strong><span>密钥保存在本地，不会在列表里回显。</span></div>
@@ -79,19 +79,27 @@
         <div id="providerList" class="provider-list" aria-live="polite"><p>暂无额外模型商。</p></div>
         <dialog id="providerDialog" class="provider-dialog" aria-labelledby="providerDialogTitle">
           <div class="provider-dialog-header"><div><div class="overline">MODEL PROVIDER SETTINGS</div><h3 id="providerDialogTitle">新增模型商</h3></div><button type="button" id="closeProviderBtn" class="provider-dialog-close" aria-label="关闭模型商设置">×</button></div>
-          <p class="provider-dialog-hint">外部模型商采用独立 API Key 计费；编辑时留空密钥将保留原 Key。</p>
-        <form id="providerForm" class="provider-form" autocomplete="off">
-          <div class="provider-form-grid">
-            <label><span>模型商 ID（如 deepseek）</span><input class="text-field" id="providerId" required pattern="[a-z][a-z0-9_-]{1,31}" placeholder="deepseek"></label>
-            <label><span>显示名称</span><input class="text-field" id="providerName" required maxlength="80" placeholder="DeepSeek 官方"></label>
-            <label><span>接口类型</span><select class="text-field" id="providerKind"><option value="openai-compatible">OpenAI 兼容 API（聊天/工具）</option><option value="ark-video">火山方舟 Ark Video（Seedance 视频任务）</option></select></label>
-            <label><span>API Base URL（HTTPS）</span><input class="text-field" id="providerBase" type="url" required placeholder="https://api.deepseek.com/v1"></label>
-            <label><span>模型商 API Key</span><input class="text-field" type="password" id="providerKey" maxlength="4096" autocomplete="new-password" placeholder="新建必填；编辑时留空保持原 Key"></label>
-            <label><span>自定义模型 ID（每行一个，可选）</span><textarea class="text-field" id="providerModels" rows="3" placeholder="目录不提供 /models 时，手动添加模型，例如 Ark 的推理接入点 ID"></textarea></label>
-          </div>
-          <label class="check-field"><input id="providerEnabled" type="checkbox" checked><span>启用这个模型商</span></label>
-          <div class="provider-actions"><button type="submit" class="btn dark" id="saveProviderBtn">保存模型商</button><button type="button" id="resetProviderBtn" class="btn outline">取消</button></div>
-        </form>
+          <p class="provider-dialog-hint">先选择云厂商或本地服务，系统会自动使用官方默认地址。没有对应预设时再选择「自定义」。云端 API 按厂商单独计费，SIWC 凭据不会转发给其他服务。</p>
+          <form id="providerForm" class="provider-form" autocomplete="off">
+            <label class="provider-preset-field" for="providerPreset"><span>选择模型商或本地服务</span>
+              <select class="text-field" id="providerPreset" required><option value="">请选择模型商…</option></select>
+            </label>
+            <div class="provider-preset-preview" id="providerPresetPreview" hidden>
+              <span id="providerPresetLogo" class="provider-avatar" aria-hidden="true"></span>
+              <div><strong id="providerPresetTitle">模型商</strong><code id="providerPresetURL"></code></div>
+            </div>
+            <div class="provider-form-grid">
+              <label><span>模型商 ID（如 ollama）</span><input class="text-field" id="providerId" required pattern="[a-z][a-z0-9_-]{1,31}" placeholder="ollama"></label>
+              <label><span>显示名称</span><input class="text-field" id="providerName" required maxlength="80" placeholder="Ollama"></label>
+              <input type="hidden" id="providerKind" value="">
+              <label id="providerBaseField" class="provider-field" hidden><span>自定义 Base URL（仅自定义时填写）</span><input class="text-field" id="providerBase" type="url" placeholder="http://127.0.0.1:11434/v1"></label>
+              <label><span>模型商 API Key（本地可选）</span><input class="text-field" type="password" id="providerKey" maxlength="4096" autocomplete="new-password" placeholder="云端新建必填；本地可不填"></label>
+              <label class="provider-model-field"><span>自定义模型 ID（每行一个，可选）</span><textarea class="text-field" id="providerModels" rows="3" placeholder="目录不提供 /models 时，可以手动填写模型 ID"></textarea></label>
+            </div>
+            <p id="providerSecurityHint" class="provider-dialog-hint">请先选择模型商。</p>
+            <label class="check-field"><input id="providerEnabled" type="checkbox" checked><span>启用这个模型商</span></label>
+            <div class="provider-actions"><button type="submit" class="btn dark" id="saveProviderBtn">保存模型商</button><button type="button" id="resetProviderBtn" class="btn outline">取消</button></div>
+          </form>
         </dialog>
         <p class="security-hint">模型 ID 推荐使用 <code>模型商ID/模型ID</code>，如 <code>deepseek/deepseek-flash</code>。不带前缀时优先匹配 SIWC；多个外部模型商同名则要求指定前缀。Images 生图接口使用 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，必须指定外部模型商，如 <code>openai-api/gpt-image-2.5-sunburst</code>，使用独立 API Key 计费，不支持 SIWC 订阅生图。Seedance 不是聊天模型，使用 <code>/v1/contents/generations/tasks</code> 异步任务接口。所有额外模型商按其自己的账单计费，绝不因 SIWC 限额自动切换。</p>
       </section>

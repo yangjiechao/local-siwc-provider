@@ -209,3 +209,14 @@ Arbitrary new files and directories in the checkout **do not block** automatic u
 ### Updater temporary files, caches, and previous version
 
 Update checks fetch Git objects into the repository cache. During installation, the updater creates a temporary `siwc-upgrade-*` worktree for tests and compilation. On success or failure, it **attempts to remove the temporary worktree and directory**, and cleans up a staged `.siwc-provider.new` executable. After successful installation it deliberately **keeps one** `siwc-provider.previous` binary as a rollback backup, replacing it on the next successful update. Git objects in `.git` and the Go build cache remain. Force-killing the process or losing power may prevent deferred cleanup.
+
+
+## Cloud and local model provider presets
+
+The provider editor now offers grouped **cloud and local provider presets**. Choosing a preset fills the verified default API URL, category and brand icon automatically. Only **Custom cloud**, **Custom local/LAN**, or **Custom video** choices enable editing the Base URL. Existing provider entries and API keys remain intact.
+
+Cloud presets: OpenAI API, DeepSeek, OpenRouter, Groq, xAI, Alibaba Qwen (Beijing/Singapore), and Volcengine Ark Video. Local presets: Ollama (`http://127.0.0.1:11434/v1`), LM Studio (`http://127.0.0.1:1234/v1`), vLLM (`http://127.0.0.1:8000/v1`) and llama.cpp (`http://127.0.0.1:8080/v1`). Local servers can omit their own API keys; the Agent must still authenticate with the Provider's local Agent API key. Start the local inference server and fetch its models before calling the configured `provider-id/model-id`.
+
+**Security:** Cloud endpoints still require public HTTPS. A custom local endpoint must explicitly specify a private/loopback IP, localhost or .local host and a port. DNS is validated and pinned on each new connection; redirects and proxies are disabled. Remote LAN inference must be deliberately configured by the user, who is responsible for protecting the LAN endpoint. Never expose an unauthenticated local model server to the public Internet. Support for Images, Responses and tool calls depends on the installed inference server and model. No automatic SIWC-to-paid fallback exists.
+
+**Icons:** Brand logos are served from bundled local assets sourced from [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT). Trademarks belong to their respective owners, and their presence does not indicate endorsement.
