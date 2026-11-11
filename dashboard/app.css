@@ -149,3 +149,25 @@ body{background:linear-gradient(180deg,#f1f5fa 0%,#f5f7fb 450px,#f6f8fb 100%);co
 .step-num{background:#e9f1fa;color:#507ca7}
 .pill.good{background:#1c664f;border-color:#347d68;color:#dcffef}
 @media(max-width:680px){.provider-order-actions{margin-right:auto}.provider-entry .provider-actions{gap:6px}.provider-order-actions .provider-order-button{width:40px;height:39px}}
+
+/* Model-specific switches: default checked, including newly discovered models. */
+.siwc-model-panel{border:1px solid #dce6f2;border-radius:13px;background:#f8fbff;padding:15px 17px;margin:14px 0 15px}
+.siwc-model-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.siwc-model-heading{display:flex;align-items:center;gap:11px}
+.siwc-mark{display:grid;place-items:center;width:38px;height:38px;background:#1d3b60;border-radius:10px;color:#fff;font-family:Georgia,serif;font-size:24px;font-style:italic;font-weight:bold}
+.siwc-model-heading h3{margin:0;font-size:14px;color:#24466c}
+.siwc-model-heading p{margin:6px 0 0;color:#73859a;font-size:11px;line-height:1.5}
+.siwc-model-footer{color:#657b98;font-size:11px;line-height:1.7;margin:12px 0 0}
+.model-toggle-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:13px;max-height:290px;overflow-y:auto}
+.model-toggle-item{display:flex;gap:10px;align-items:center;min-width:0;padding:9px 10px;border:1px solid #dce6f1;border-radius:8px;background:#fff;cursor:pointer}
+.model-toggle-item:hover{background:#f1f6ff;border-color:#a9c6e6}
+.model-toggle-item:has(input:focus-visible){outline:2px solid #6894bf;outline-offset:2px}
+.model-toggle-item input{width:16px;height:16px;accent-color:#2e5b88;flex-shrink:0;margin:0}
+.model-toggle-item code{font-size:11px;white-space:normal;overflow-wrap:anywhere;color:#2b4f75}
+.model-toggle-item:has(input:not(:checked)){background:#f5f6f8;border-color:#e3e7ec}
+.model-toggle-item:has(input:not(:checked)) code{color:#8895a5}
+.model-toggle-empty{color:#8493a5;font-size:12px;line-height:1.65;margin:0;grid-column:1/-1}
+.provider-model-hint{color:#77899f;font-size:10px;line-height:1.65;margin:9px 0 0}
+.provider-model-details>.model-toggle-grid{margin-top:10px}
+.provider-model-details[open] summary{color:#2f5f94}
+@media(max-width:680px){.model-toggle-grid{grid-template-columns:1fr}.siwc-model-panel{padding:14px}}

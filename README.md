@@ -227,3 +227,12 @@ Cloud presets: OpenAI API, DeepSeek, OpenRouter, Groq, xAI, Alibaba Qwen (Beijin
 The provider list has accessible **Up / Down** controls. Provider order is saved atomically and survives restarts. SIWC always wins when its authenticated catalog contains a model; otherwise the first enabled provider in user order wins for unprefixed model IDs. Explicit `provider-id/model-id` bypasses this selection order. Filtering disables reordering to avoid moving an item against hidden neighbors. A provider failure never triggers retry/failover to another, potentially paid, provider. When an SIWC session exists but its catalog cannot be confirmed, unprefixed models are blocked rather than silently forwarded to charged providers.
 
 The local dashboard now uses a calm navy/slate-blue palette, preserving the existing controls and locally bundled provider logos.
+
+
+### Per-provider model enablement (enabled by default)
+
+Every model discovered through SIWC or an external provider has a **checked-by-default** toggle on the dashboard. SIWC models appear in a pinned first-priority section; external vendor models appear in each expanded model list. Unchecking a model disables only that provider/model combination and persists across refreshes and restarts. Newly discovered models are automatically enabled unless explicitly disabled.
+
+For an **unprefixed** model ID, the router checks the enabled SIWC model first and then the enabled models of external providers in saved priority order. A manually disabled SIWC model will permit a later external provider with the same enabled model ID to be selected, **possibly incurring paid API charges**. Explicit `provider-id/model-id` always targets only that provider; disabled models are rejected rather than silently rerouted. There is no retry or failover on upstream errors, rate limits or subscription exhaustion. An unavailable SIWC catalog while signed in still blocks unprefixed requests to prevent accidental paid inference.
+
+The dashboard displays all available models (including unchecked ones) and the Agent-facing `GET /v1/models` lists only enabled models. Model toggles are saved in the local owner-only state file and do not alter OAuth tokens, vendor API keys, or provider priority.

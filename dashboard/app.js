@@ -7,6 +7,11 @@ let keyCache = null;
 let keyShown = false;
 let modelList = [];
 let configuredProviders = [];
+let siwcModels = [];
+let siwcDisabledModels = [];
+let siwcSignedIn = false;
+let siwcCatalogOK = false;
+let siwcCatalogError = '';
 let modelsLoaded = false;
 let updateInfo = null;
 let busy = false;
@@ -112,7 +117,7 @@ $('logoutBtn').addEventListener('click', () => {
   perform('退出登录', async () => {
     await call('logout', {method:'POST', body:{}});
     modelList = []; modelsLoaded = false; updateModels(); keyCache = null;
-    await fetchStatus(); toast('已退出当前 ChatGPT 授权');
+    await fetchStatus();await loadProviders();toast('已退出当前 ChatGPT 授权');
   });
 });
 $('toggleServiceBtn').addEventListener('click', () => perform('切换服务', async () => {
@@ -483,6 +488,64 @@ async function moveProviderPriority(id, offset) {
   toast('已保存优先级：同名模型将匹配列表里靠前的模型商');
 }
 
+// Missing persisted opt-out flags mean enabled. Newly discovered models
+// therefore start checked without requiring additional writes or migrations.
+function modelCheckbox(providerID, model, disabledModels) {
+  const label=document.createElement('label');label.className='model-toggle-item';
+  const input=document.createElement('input');input.type='checkbox';
+  input.checked=!disabledModels.includes(model);
+  input.setAttribute('aria-label','启用 '+providerID+' 的模型 '+model);
+  const modelText=document.createElement('code');modelText.textContent=model;
+  label.append(input,modelText);
+  input.addEventListener('change',()=>{
+    const enabled=input.checked;
+    if (busy) { input.checked=!enabled;return; }
+    perform('设置模型',async()=>{
+      input.disabled=true;
+      try {
+        await call('models/enable',{method:'POST',body:{provider:providerID,model,enabled}});
+        await loadProviders();
+        toast(providerID+' / '+model+(enabled?' 已启用':' 已停用')+'，路由规则已生效');
+      } catch(err) {
+        input.checked=!enabled;
+        input.disabled=false;
+        throw err;
+      }
+    });
+  });
+  return label;
+}
+
+function renderSIWCModelToggles() {
+  const container=$('siwcModelToggleList');
+  container.replaceChildren();
+  const tag=$('siwcModelStatus');
+  if (!siwcSignedIn) {
+    tag.textContent='未登录';tag.className='provider-status disabled';
+    const note=document.createElement('p');note.className='model-toggle-empty';
+    note.textContent='登录 SIWC 后会自动显示发现的模型，并默认全部勾选。退出登录时可继续使用下方外部模型商。';
+    container.append(note);return;
+  }
+  if (!siwcCatalogOK) {
+    tag.textContent='目录不可用';tag.className='provider-status disabled';
+    const note=document.createElement('p');note.className='model-toggle-empty';
+    note.textContent='SIWC 模型目录暂不可用：'+(siwcCatalogError||'请点击刷新模型列表')+'。出于计费安全，无前缀模型暂不自动切换外部厂商。';
+    container.append(note);return;
+  }
+  const disabled=new Set(siwcDisabledModels);
+  const enabledCount=siwcModels.filter(m=>!disabled.has(m)).length;
+  tag.textContent=enabledCount+'/'+siwcModels.length+' 已启用';
+  tag.className='provider-status enabled';
+  if (!siwcModels.length) {
+    const note=document.createElement('p');note.className='model-toggle-empty';
+    note.textContent='当前 SIWC 账号没有返回可管理的模型。';container.append(note);
+    return;
+  }
+  for(const model of siwcModels) {
+    container.append(modelCheckbox('siwc',model,siwcDisabledModels));
+  }
+}
+
 function renderProviders() {
   const host=$('providerList');host.replaceChildren();
   const count=configuredProviders.length,enabled=configuredProviders.filter(x=>x.enabled).length;
@@ -519,10 +582,17 @@ function renderProviders() {
     }
     if (Array.isArray(item.models)&&item.models.length) {
       const models=document.createElement('details');models.className='provider-model-details';
-      const summary=document.createElement('summary');summary.textContent='查看 '+item.models.length+' 个模型 ID';
-      const values=document.createElement('div');values.className='provider-model-values';
-      for(const m of item.models){const c=document.createElement('code');c.textContent=m;values.append(c);}
-      models.append(summary,values);titleArea.append(models);
+      const disabled=Array.isArray(item.disabled_models)?item.disabled_models:[];
+      const activeCount=item.models.filter(m=>!disabled.includes(m)).length;
+      const summary=document.createElement('summary');
+      summary.textContent='模型开关：'+activeCount+' / '+item.models.length+' 已启用';
+      const hint=document.createElement('p');hint.className='provider-model-hint';
+      hint.textContent='默认全部勾选。取消后，未指定厂商的请求会继续寻找下一个已启用该模型的厂商。';
+      const values=document.createElement('div');values.className='model-toggle-grid';
+      for (const m of item.models) {
+        values.append(modelCheckbox(item.id,m,disabled));
+      }
+      models.append(summary,hint,values);titleArea.append(models);
     }
     const preset=findPreset(resolvedPreset(item));
     info.append(makeBrandLogo(preset?.logo,item.name),titleArea);
@@ -563,6 +633,12 @@ async function loadProviders(withModels=true) {
   if (!unlocked) return;
   const data=await call('providers');
   configuredProviders=Array.isArray(data.providers)?data.providers:[];
+  siwcModels=Array.isArray(data.siwc_models)?data.siwc_models:[];
+  siwcDisabledModels=Array.isArray(data.siwc_disabled_models)?data.siwc_disabled_models:[];
+  siwcSignedIn=!!data.siwc_signed_in;
+  siwcCatalogOK=!!data.siwc_catalog_ok;
+  siwcCatalogError=data.siwc_error||'';
+  renderSIWCModelToggles();
   renderProviders();
   if (withModels&&Array.isArray(data.models)){
     modelList=data.models.map(x=>x.id).filter(Boolean);
