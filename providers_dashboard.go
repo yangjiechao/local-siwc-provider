@@ -10,7 +10,57 @@ import (
 // Provider management endpoints are intentionally dashboard-only, under the
 // same local administrator session, CSRF validation and loopback binding.
 func (d *Dashboard) listProviders(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, 200, map[string]any{"providers": d.server.router.Providers(), "models": d.server.router.Models()})
+	own, ok, errMsg := d.server.router.OwnModels()
+	state := d.server.auth.store.get()
+	writeJSON(w, 200, map[string]any{
+		"providers": d.server.router.Providers(),
+		"models": d.server.router.Models(),
+		"siwc_models": own,
+		"siwc_catalog_ok": ok,
+		"siwc_error": errMsg,
+		"siwc_signed_in": state.Credential != nil,
+		"siwc_disabled_models": append([]string{}, state.DisabledModels["siwc"]...),
+	})
+}
+
+// toggleModelEnabled requires an actively listed model. Disabled entries
+// remain in the underlying discovery catalog so users can re-enable them.
+func (d *Dashboard) toggleModelEnabled(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Provider string `json:"provider"`
+		Model string `json:"model"`
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil || body.Enabled == nil {
+		writeError(w, 400, "bad_request", "provider, model and enabled boolean required")
+		return
+	}
+	found := false
+	if body.Provider == "siwc" {
+		models, ok, _ := d.server.router.OwnModels()
+		if ok && d.server.auth.store.get().Credential != nil {
+			for _, model := range models {
+				if model == body.Model { found = true; break }
+			}
+		}
+	} else {
+		for _, provider := range d.server.router.Providers() {
+			if provider.ID != body.Provider { continue }
+			for _, model := range provider.Models {
+				if model == body.Model { found = true; break }
+			}
+			break
+		}
+	}
+	if !found {
+		writeError(w, 404, "model_not_found", "model is not in the current provider catalog")
+		return
+	}
+	if err := d.server.auth.store.setModelEnabled(body.Provider, body.Model, *body.Enabled); err != nil {
+		writeError(w, 400, "invalid_model_setting", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (d *Dashboard) saveProvider(w http.ResponseWriter, req *http.Request) {
@@ -74,7 +124,7 @@ func (d *Dashboard) refreshProviders(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	d.server.router.Refresh(ctx)
 	own, ok, errMsg := d.server.router.OwnModels()
-	writeJSON(w, 200, map[string]any{"models": d.server.router.Models(), "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "providers": d.server.router.Providers()})
+	writeJSON(w, 200, map[string]any{"models": d.server.router.Models(), "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "siwc_signed_in": d.server.auth.store.get().Credential != nil, "siwc_disabled_models": append([]string{}, d.server.auth.store.get().DisabledModels["siwc"]...), "providers": d.server.router.Providers()})
 }
 
 // Preset catalog is public metadata but is served through the authenticated,

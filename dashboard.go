@@ -67,6 +67,7 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/providers", d.authorized(d.saveProvider))
 	mux.HandleFunc("POST /ui/api/providers/delete", d.authorized(d.deleteProvider))
 	mux.HandleFunc("POST /ui/api/providers/reorder", d.authorized(d.reorderProviders))
+	mux.HandleFunc("POST /ui/api/models/enable", d.authorized(d.toggleModelEnabled))
 	mux.HandleFunc("POST /ui/api/providers/refresh", d.authorized(d.refreshProviders))
 	mux.HandleFunc("GET /ui/api/update", d.authorized(d.updateStatus))
 	mux.HandleFunc("POST /ui/api/update/check", d.authorized(d.checkUpdate))
@@ -431,7 +432,7 @@ func (d *Dashboard) models(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, e.ID)
 	}
 	own, ok, errMsg := d.server.router.OwnModels()
-	writeJSON(w, 200, map[string]any{"models": ids, "details": entries, "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "providers": d.server.router.Providers()})
+	writeJSON(w, 200, map[string]any{"models": ids, "details": entries, "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "siwc_signed_in": d.server.auth.store.get().Credential != nil, "siwc_disabled_models": append([]string{}, d.server.auth.store.get().DisabledModels["siwc"]...), "providers": d.server.router.Providers()})
 }
 
 // Version checking and upgrades are accessible only from the authenticated

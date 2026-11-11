@@ -43,6 +43,7 @@ type PublicProvider struct {
 	ManualModels []string `json:"manual_models"`
 	Preset       string   `json:"preset,omitempty"`
 	Models       []string `json:"models"`
+	DisabledModels []string `json:"disabled_models"`
 	Error        string   `json:"discovery_error,omitempty"`
 	RefreshedAt  string   `json:"refreshed_at,omitempty"`
 }
@@ -335,14 +336,18 @@ func (r *Router) Models() []RoutedModel {
 	s := r.snap
 	models := make([]RoutedModel, 0, len(s.own))
 	for _, id := range s.own {
-		models = append(models, RoutedModel{ID: id, Provider: "siwc", Kind: "siwc"})
+		if !modelDisabled(state, "siwc", id) {
+			models = append(models, RoutedModel{ID: id, Provider: "siwc", Kind: "siwc"})
+		}
 	}
 	for _, p := range state.Providers {
 		if !p.Enabled {
 			continue
 		}
 		for _, id := range modelsForProvider(p, s.providers[p.ID]) {
-			models = append(models, RoutedModel{ID: p.ID + "/" + id, Provider: p.ID, Kind: p.Kind})
+			if !modelDisabled(state, p.ID, id) {
+				models = append(models, RoutedModel{ID: p.ID + "/" + id, Provider: p.ID, Kind: p.Kind})
+			}
 		}
 	}
 	r.mu.RUnlock()
@@ -356,7 +361,7 @@ func (r *Router) Providers() []PublicProvider {
 	defer r.mu.RUnlock()
 	out := make([]PublicProvider, 0, len(state.Providers))
 	for _, p := range state.Providers {
-		x := PublicProvider{ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Preset: p.Preset, Enabled: p.Enabled, HasAPIKey: p.APIKey != "", ManualModels: append([]string{}, p.ManualModels...), Models: modelsForProvider(p, r.snap.providers[p.ID]), Error: r.snap.errs[p.ID]}
+		x := PublicProvider{ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Preset: p.Preset, Enabled: p.Enabled, HasAPIKey: p.APIKey != "", ManualModels: append([]string{}, p.ManualModels...), Models: modelsForProvider(p, r.snap.providers[p.ID]), DisabledModels: append([]string{}, state.DisabledModels[p.ID]...), Error: r.snap.errs[p.ID]}
 		if t := r.snap.refreshed[p.ID]; !t.IsZero() {
 			x.RefreshedAt = t.UTC().Format(time.RFC3339)
 		}
@@ -387,6 +392,9 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 		}
 		for _, x := range s.own {
 			if x == real {
+				if modelDisabled(state, "siwc", real) {
+					return nil, "", errors.New("model is disabled for SIWC")
+				}
 				return nil, real, nil
 			}
 		}
@@ -397,6 +405,9 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 			real := strings.TrimPrefix(model, p.ID+"/")
 			for _, x := range modelsForProvider(p, s.providers[p.ID]) {
 				if x == real {
+					if modelDisabled(state, p.ID, real) {
+						return nil, "", errors.New("model is disabled for this provider")
+					}
 					return &p, real, nil
 				}
 			}
@@ -408,7 +419,7 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 			return nil, "", errors.New("SIWC model catalog unavailable; refresh before using unprefixed models")
 		}
 		for _, x := range s.own {
-			if model == x {
+			if model == x && !modelDisabled(state, "siwc", model) {
 				return nil, model, nil
 			}
 		}
@@ -418,7 +429,7 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 			continue
 		}
 		for _, x := range modelsForProvider(p, s.providers[p.ID]) {
-			if x == model {
+			if x == model && !modelDisabled(state, p.ID, model) {
 				cp := p
 				return &cp, model, nil
 			}

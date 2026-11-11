@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,6 +36,9 @@ type State struct {
 	APIEnabled bool               `json:"api_enabled"`
 	Credential *Credential        `json:"credential,omitempty"`
 	Providers  []ExternalProvider `json:"providers,omitempty"`
+	// Each missing entry is enabled by default. Keys are "siwc" or provider ID.
+	// Disabled IDs survive catalog refreshes and application restarts.
+	DisabledModels map[string][]string `json:"disabled_models,omitempty"`
 }
 
 type Store struct {
@@ -199,6 +203,13 @@ func (s *Store) get() State {
 			v.Providers[i].ManualModels = append([]string(nil), v.Providers[i].ManualModels...)
 		}
 	}
+	if v.DisabledModels != nil {
+		copied := make(map[string][]string, len(v.DisabledModels))
+		for provider, models := range v.DisabledModels {
+			copied[provider] = append([]string(nil), models...)
+		}
+		v.DisabledModels = copied
+	}
 	return v
 }
 
@@ -278,15 +289,67 @@ func (s *Store) reorderProviders(ids []string) error {
 	return nil
 }
 
+// modelDisabled means an explicit opt-out; an unlisted or newly discovered
+// model is enabled by default, including when loading legacy state files.
+func modelDisabled(state State, provider, model string) bool {
+	for _, id := range state.DisabledModels[provider] {
+		if id == model {
+			return true
+		}
+	}
+	return false
+}
+
+// setModelEnabled changes only one model's opt-in status and persists it
+// atomically. A provider's other models and credentials are untouched.
+func (s *Store) setModelEnabled(provider, model string, enabled bool) error {
+	if model == "" || len(model) > 512 || strings.TrimSpace(model) != model || strings.ContainsAny(model, "\r\n\x00") {
+		return errors.New("invalid model ID")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if provider != "siwc" {
+		found := false
+		for _, p := range s.state.Providers {
+			if p.ID == provider { found = true; break }
+		}
+		if !found { return errors.New("provider does not exist") }
+	}
+	old := s.state.DisabledModels
+	next := make(map[string][]string, len(old))
+	for k, models := range old { next[k] = append([]string(nil), models...) }
+	remaining := make([]string, 0, len(next[provider])+1)
+	for _, m := range next[provider] {
+		if m != model { remaining = append(remaining, m) }
+	}
+	if !enabled { remaining = append(remaining, model) }
+	if len(remaining) == 0 { delete(next, provider) } else { next[provider] = remaining }
+	s.state.DisabledModels = next
+	if err := s.saveLocked(); err != nil {
+		s.state.DisabledModels = old
+		return err
+	}
+	return nil
+}
+
 func (s *Store) deleteProvider(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	before := append([]ExternalProvider(nil), s.state.Providers...)
+	oldDisabled := s.state.DisabledModels
 	for i, p := range s.state.Providers {
 		if p.ID == id {
 			s.state.Providers = append(s.state.Providers[:i], s.state.Providers[i+1:]...)
+			if oldDisabled != nil {
+				next := make(map[string][]string, len(oldDisabled))
+				for k, val := range oldDisabled {
+					if k != id { next[k] = append([]string(nil), val...) }
+				}
+				s.state.DisabledModels = next
+			}
 			if err := s.saveLocked(); err != nil {
 				s.state.Providers = before
+				s.state.DisabledModels = oldDisabled
 				return err
 			}
 			return nil
