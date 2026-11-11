@@ -200,7 +200,15 @@ func (u *UpdateManager) checkSource(ctx context.Context) error {
 		return errors.New("未找到 Git 仓库，无法安全地自动更新")
 	}
 	root, err := gitCmd(ctx, u.repoDir, "rev-parse", "--show-toplevel")
-	if err != nil || filepath.Clean(root) != filepath.Clean(u.repoDir) {
+	if err != nil {
+		return errors.New("无法确认程序所在的 Git 仓库根目录")
+	}
+	// macOS often reports /var/folders/... in TempDir while Git resolves the
+	// same location as /private/var/folders/.... Compare canonical filesystem
+	// locations instead of their original path strings.
+	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+	resolvedRepo, repoErr := filepath.EvalSymlinks(u.repoDir)
+	if rootErr != nil || repoErr != nil || filepath.Clean(resolvedRoot) != filepath.Clean(resolvedRepo) {
 		return errors.New("程序不在仓库根目录")
 	}
 	branch, err := gitCmd(ctx, u.repoDir, "symbolic-ref", "--short", "HEAD")

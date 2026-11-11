@@ -215,3 +215,14 @@ func TestGitHub403ExplainsRateLimit(t *testing.T) {
 	err := u.githubJSON(context.Background(), "/commits/main", &payload)
 	if err == nil || !strings.Contains(err.Error(), "额度已耗尽") { t.Fatalf("missing actionable rate limit error: %v", err) }
 }
+
+func TestCheckSourceAcceptsSymlinkedRepoRoot(t *testing.T) {
+	u, _ := repoFixture(t)
+	alias := filepath.Join(t.TempDir(), "repository-link")
+	if err := os.Symlink(u.repoDir, alias); err != nil { t.Fatal(err) }
+	u.repoDir = alias
+	u.binaryPath = filepath.Join(alias, "siwc-provider")
+	if err := u.checkSource(context.Background()); err != nil {
+		t.Fatalf("same physical git checkout must be accepted via symlink: %v", err)
+	}
+}
