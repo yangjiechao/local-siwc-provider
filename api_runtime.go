@@ -63,6 +63,14 @@ func (a *APIRuntime) startLocked(port int, lan bool) error {
 	if err != nil {
 		return fmt.Errorf("cannot listen at %s: %w", addr, err)
 	}
+	a.adoptListenerLocked(listener)
+	return nil
+}
+
+// adoptListenerLocked starts serving an already bound port. Configure uses this
+// when switching ports so a busy new port cannot take down the old listener.
+// The caller owns a.mu and transfers ownership of listener to the runtime.
+func (a *APIRuntime) adoptListenerLocked(listener net.Listener) {
 	srv := &http.Server{Handler: a.app.APIHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	a.listener, a.server = listener, srv
 	a.app.apiEnabled.Store(true)
@@ -72,7 +80,6 @@ func (a *APIRuntime) startLocked(port int, lan bool) error {
 			fmt.Fprintf(os.Stderr, "SIWC API listener failed: %v\n", err)
 		}
 	}()
-	return nil
 }
 
 func (a *APIRuntime) stopLocked() error {
@@ -86,8 +93,12 @@ func (a *APIRuntime) stopLocked() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
+		// Shutdown already closes the listening socket. Leaving an error here
+		// would strand the runtime in the stopped state and prevent Configure
+		// from rebinding the previous port. Force-close lingering connections
+		// after the grace period and complete the listener transition.
 		_ = srv.Close()
-		return fmt.Errorf("stopping API: %w", err)
+		fmt.Fprintf(os.Stderr, "SIWC API graceful shutdown expired, forced close: %v\n", err)
 	}
 	return nil
 }
@@ -152,26 +163,50 @@ func (a *APIRuntime) Configure(port int, lan bool) error {
 		return nil
 	}
 	wasRunning := a.listener != nil
-	if wasRunning {
-		if err := a.stopLocked(); err != nil {
-			return err
+
+	// For different ports, bind the candidate BEFORE stopping the live API.
+	// On EADDRINUSE, the original listener and settings remain untouched.
+	// A same-port LAN toggle cannot prebind while the old socket exists;
+	// that path still has a guarded rollback below.
+	var candidate net.Listener
+	if wasRunning && port != prior.APIPort {
+		var err error
+		candidate, err = net.Listen("tcp4", apiBindAddress(port, lan))
+		if err != nil {
+			return fmt.Errorf("new API listener unavailable; previous port remains active: %w", err)
 		}
+		defer func() {
+			if candidate != nil {
+				_ = candidate.Close()
+			}
+		}()
 	}
+
+	// Save only once the candidate is known to be bindable. Failure must
+	// leave the old listener untouched and close any reserved new socket.
 	if err := a.store.saveAPISettings(port, lan); err != nil {
-		if wasRunning {
-			_ = a.startLocked(prior.APIPort, prior.LANEnabled)
-		}
 		return err
 	}
-	if wasRunning {
-		if err := a.startLocked(port, lan); err != nil {
-			_ = a.store.saveAPISettings(prior.APIPort, prior.LANEnabled)
-			if restoreErr := a.startLocked(prior.APIPort, prior.LANEnabled); restoreErr != nil {
-				_ = a.store.saveAPIEnabled(false)
-				return fmt.Errorf("new API listener failed: %w; could not restore previous listener: %v", err, restoreErr)
-			}
-			return fmt.Errorf("new API listener failed, previous port restored: %w", err)
+	if !wasRunning {
+		return nil
+	}
+	if err := a.stopLocked(); err != nil {
+		_ = a.store.saveAPISettings(prior.APIPort, prior.LANEnabled)
+		_ = a.startLocked(prior.APIPort, prior.LANEnabled)
+		return err
+	}
+	if candidate != nil {
+		a.adoptListenerLocked(candidate)
+		candidate = nil
+		return nil
+	}
+	if err := a.startLocked(port, lan); err != nil {
+		_ = a.store.saveAPISettings(prior.APIPort, prior.LANEnabled)
+		if restoreErr := a.startLocked(prior.APIPort, prior.LANEnabled); restoreErr != nil {
+			_ = a.store.saveAPIEnabled(false)
+			return fmt.Errorf("new API listener failed: %w; could not restore previous listener: %v", err, restoreErr)
 		}
+		return fmt.Errorf("new API listener failed, previous port restored: %w", err)
 	}
 	return nil
 }

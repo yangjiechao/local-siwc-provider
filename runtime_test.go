@@ -149,12 +149,23 @@ func TestPortLANAndManualKeyFromDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer block.Close()
+	// Switching to an occupied different port must not close/recreate the
+	// existing listener at all, even with active keep-alive connections.
+	runtime.mu.Lock()
+	previousListener, previousServer := runtime.listener, runtime.server
+	runtime.mu.Unlock()
 	w = adminRequest(t, admin, "POST", "/ui/api/settings", map[string]any{"port": busyPort, "lan": true}, cookie)
 	if w.Code != 409 {
 		t.Fatalf("occupied port should fail: %d %s", w.Code, w.Body.String())
 	}
 	if app.auth.store.get().APIPort != port || app.auth.store.get().LANEnabled {
 		t.Fatal("config did not roll back")
+	}
+	runtime.mu.Lock()
+	listenerUnchanged := runtime.listener == previousListener && runtime.server == previousServer
+	runtime.mu.Unlock()
+	if !listenerUnchanged {
+		t.Fatal("occupied target port must leave the original listener running, without a restart")
 	}
 	resp, err = client.Get(url)
 	if err != nil {
