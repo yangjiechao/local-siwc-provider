@@ -59,3 +59,9 @@ func (d *Dashboard) refreshProviders(w http.ResponseWriter, req *http.Request) {
 	own, ok, errMsg := d.server.router.OwnModels()
 	writeJSON(w, 200, map[string]any{"models": d.server.router.Models(), "siwc_models": own, "siwc_catalog_ok": ok, "siwc_error": errMsg, "providers": d.server.router.Providers()})
 }
+
+// Preset catalog is public metadata but is served through the authenticated,
+// loopback-only dashboard. Keys and OAuth tokens are never included.
+func (d *Dashboard) listProviderPresets(w http.ResponseWriter, req *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"presets": providerPresets})
+}

@@ -214,9 +214,13 @@ func (s *Store) upsertProvider(p ExternalProvider) error {
 			found = true
 			if p.APIKey == "" {
 				if p.BaseURL != s.state.Providers[i].BaseURL {
-					return errors.New("API key must be re-entered when provider URL changes")
+					if p.Kind != "local-openai-compatible" {
+						return errors.New("API key must be re-entered when provider URL changes")
+					}
+					// Never copy a token to a different local network endpoint.
+				} else {
+					p.APIKey = s.state.Providers[i].APIKey
 				}
-				p.APIKey = s.state.Providers[i].APIKey
 			}
 			s.state.Providers[i] = p
 			break
@@ -226,8 +230,8 @@ func (s *Store) upsertProvider(p ExternalProvider) error {
 		if len(s.state.Providers) >= 16 {
 			return errors.New("maximum 16 external providers")
 		}
-		if p.APIKey == "" {
-			return errors.New("API key is required for a new provider")
+		if p.APIKey == "" && p.Kind != "local-openai-compatible" {
+			return errors.New("API key is required for a new cloud provider")
 		}
 		s.state.Providers = append(s.state.Providers, p)
 	}

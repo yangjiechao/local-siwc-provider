@@ -30,6 +30,7 @@ type ExternalProvider struct {
 	APIKey       string   `json:"api_key"`
 	Enabled      bool     `json:"enabled"`
 	ManualModels []string `json:"manual_models,omitempty"`
+	Preset       string   `json:"preset,omitempty"`
 }
 
 type PublicProvider struct {
@@ -40,6 +41,7 @@ type PublicProvider struct {
 	Enabled      bool     `json:"enabled"`
 	HasAPIKey    bool     `json:"has_api_key"`
 	ManualModels []string `json:"manual_models"`
+	Preset       string   `json:"preset,omitempty"`
 	Models       []string `json:"models"`
 	Error        string   `json:"discovery_error,omitempty"`
 	RefreshedAt  string   `json:"refreshed_at,omitempty"`
@@ -67,6 +69,7 @@ type Router struct {
 	store     *Store
 	auth      *Auth
 	client    *http.Client
+	localClient *http.Client
 	mu        sync.RWMutex
 	refreshMu sync.Mutex
 	snap      modelSnapshot
@@ -98,7 +101,16 @@ func newRouter(a *Auth) *Router {
 		var d net.Dialer
 		return d.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 	}
-	return &Router{store: a.store, auth: a, client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, snap: modelSnapshot{providers: map[string][]string{}, errs: map[string]string{}, refreshed: map[string]time.Time{}}}
+	localTransport := http.DefaultTransport.(*http.Transport).Clone()
+	localTransport.Proxy = nil
+	localTransport.ResponseHeaderTimeout = 3 * time.Minute
+	localTransport.DialContext = dialLocalProvider
+	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Router{store: a.store, auth: a,
+		client: &http.Client{Transport: transport, CheckRedirect: noRedirect},
+		localClient: &http.Client{Transport: localTransport, CheckRedirect: noRedirect},
+		snap: modelSnapshot{providers: map[string][]string{}, errs: map[string]string{}, refreshed: map[string]time.Time{}}}
+
 }
 
 var providerIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,31}$`)
@@ -110,11 +122,23 @@ func validateExternalProvider(p ExternalProvider) error {
 	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 80 {
 		return errors.New("provider name required (max 80 chars)")
 	}
-	if p.Kind != "openai-compatible" && p.Kind != "ark-video" {
+	if p.Kind != "openai-compatible" && p.Kind != "ark-video" && p.Kind != "local-openai-compatible" {
 		return errors.New("unknown provider kind")
 	}
-	if err := validateProviderURL(p.BaseURL); err != nil {
-		return err
+	if p.Preset != "" && p.Preset != "custom" {
+		preset, exists := findProviderPreset(p.Preset)
+		if !exists || p.Kind != preset.Kind || p.BaseURL != preset.BaseURL {
+			return errors.New("provider preset does not match its official endpoint and API type")
+		}
+	}
+	var addressErr error
+	if p.Kind == "local-openai-compatible" {
+		addressErr = validateLocalProviderURL(p.BaseURL)
+	} else {
+		addressErr = validateProviderURL(p.BaseURL)
+	}
+	if addressErr != nil {
+		return addressErr
 	}
 	if len(p.APIKey) > 4096 {
 		return errors.New("API key is too long")
@@ -202,9 +226,9 @@ func (r *Router) refreshExternal(ctx context.Context, p ExternalProvider) ([]str
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	if p.APIKey != "" { req.Header.Set("Authorization", "Bearer "+p.APIKey) }
 	req.Header.Set("Accept", "application/json")
-	resp, err := r.client.Do(req)
+	resp, err := r.clientFor(p).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +356,7 @@ func (r *Router) Providers() []PublicProvider {
 	defer r.mu.RUnlock()
 	out := make([]PublicProvider, 0, len(state.Providers))
 	for _, p := range state.Providers {
-		x := PublicProvider{ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Enabled: p.Enabled, HasAPIKey: p.APIKey != "", ManualModels: append([]string{}, p.ManualModels...), Models: modelsForProvider(p, r.snap.providers[p.ID]), Error: r.snap.errs[p.ID]}
+		x := PublicProvider{ID: p.ID, Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Preset: p.Preset, Enabled: p.Enabled, HasAPIKey: p.APIKey != "", ManualModels: append([]string{}, p.ManualModels...), Models: modelsForProvider(p, r.snap.providers[p.ID]), Error: r.snap.errs[p.ID]}
 		if t := r.snap.refreshed[p.ID]; !t.IsZero() {
 			x.RefreshedAt = t.UTC().Format(time.RFC3339)
 		}
@@ -409,6 +433,13 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 	return nil, "", errors.New("unknown model: refresh catalog or add it to a provider's manual models")
 }
 
+// clientFor enforces separate, pinned-network transports for public cloud and
+// explicitly configured local inference. A cloud vendor cannot gain LAN access.
+func (r *Router) clientFor(p ExternalProvider) *http.Client {
+	if p.Kind == "local-openai-compatible" { return r.localClient }
+	return r.client
+}
+
 func (r *Router) proxyExternal(w http.ResponseWriter, req *http.Request, p ExternalProvider, upstreamModel string, kind string, body []byte, path string) {
 	endpoint := strings.TrimRight(p.BaseURL, "/") + path
 	r.proxyExternalTo(w, req, p, body, endpoint)
@@ -420,10 +451,10 @@ func (r *Router) proxyExternalTo(w http.ResponseWriter, req *http.Request, p Ext
 		writeError(w, 400, "invalid_request", err.Error())
 		return
 	}
-	outbound.Header.Set("Authorization", "Bearer "+p.APIKey)
+	if p.APIKey != "" { outbound.Header.Set("Authorization", "Bearer "+p.APIKey) }
 	outbound.Header.Set("Content-Type", "application/json")
 	outbound.Header.Set("Accept", req.Header.Get("Accept"))
-	response, err := r.client.Do(outbound)
+	response, err := r.clientFor(p).Do(outbound)
 	if err != nil {
 		writeError(w, 502, "provider_unavailable", "External provider request failed: "+err.Error())
 		return
@@ -524,7 +555,7 @@ func (s *Server) routeInference(w http.ResponseWriter, req *http.Request, route 
 		}
 		return
 	}
-	if provider.Kind != "openai-compatible" {
+	if provider.Kind != "openai-compatible" && provider.Kind != "local-openai-compatible" {
 		writeError(w, 400, "unsupported_capability", "Video models use /v1/contents/generations/tasks, not Chat Completions")
 		return
 	}

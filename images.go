@@ -99,7 +99,7 @@ func (s *Server) routeImages(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "model_not_found", err.Error())
 		return
 	}
-	if provider == nil || provider.Kind != "openai-compatible" || provider.ID != providerID {
+	if provider == nil || (provider.Kind != "openai-compatible" && provider.Kind != "local-openai-compatible") || provider.ID != providerID {
 		writeError(w, http.StatusBadRequest, "unsupported_capability", "Images require an explicitly selected OpenAI-compatible, independently billed provider")
 		return
 	}
@@ -268,17 +268,17 @@ func (r *Router) proxyImageRequest(w http.ResponseWriter, req *http.Request, pro
 		writeError(w, http.StatusBadRequest, "invalid_request", "could not construct image request")
 		return
 	}
-	outbound.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	if provider.APIKey != "" { outbound.Header.Set("Authorization", "Bearer "+provider.APIKey) }
 	outbound.Header.Set("Content-Type", contentType)
 	outbound.Header.Set("Accept", "application/json, text/event-stream")
 	// Reuse the externally configured client's DNS SSRF guard and TLS settings,
 	// but image generation can take substantially longer than text completion.
-	client := r.client
-	if transport, ok := r.client.Transport.(*http.Transport); ok {
+	client := r.clientFor(provider)
+	if transport, ok := client.Transport.(*http.Transport); ok {
 		clone := transport.Clone()
 		clone.ResponseHeaderTimeout = 4 * time.Minute
 		defer clone.CloseIdleConnections()
-		client = &http.Client{Transport: clone, CheckRedirect: r.client.CheckRedirect}
+		client = &http.Client{Transport: clone, CheckRedirect: client.CheckRedirect}
 	}
 	response, err := client.Do(outbound)
 	if err != nil {

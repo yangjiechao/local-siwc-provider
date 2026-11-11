@@ -63,6 +63,7 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/quit", d.authorized(d.quitProgram))
 	mux.HandleFunc("GET /ui/api/models", d.authorized(d.models))
 	mux.HandleFunc("GET /ui/api/providers", d.authorized(d.listProviders))
+	mux.HandleFunc("GET /ui/api/provider-presets", d.authorized(d.listProviderPresets))
 	mux.HandleFunc("POST /ui/api/providers", d.authorized(d.saveProvider))
 	mux.HandleFunc("POST /ui/api/providers/delete", d.authorized(d.deleteProvider))
 	mux.HandleFunc("POST /ui/api/providers/refresh", d.authorized(d.refreshProviders))
