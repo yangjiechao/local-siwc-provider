@@ -6,7 +6,11 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -14,6 +18,8 @@ jobs:
           go-version-file: go.mod
       - name: Test
         run: go test -race ./...
+      - name: Port switch regression (repeated)
+        run: go test -run 'TestPortLANAndManualKeyFromDashboard|TestLANBindRejectsSpecificInterfacePort' -count=20 .
       - name: Vet
         run: go vet ./...
       - name: Build

@@ -143,12 +143,13 @@ func TestPortLANAndManualKeyFromDashboard(t *testing.T) {
 		t.Fatalf("new key rejected: %d", c)
 	}
 
-	busyPort := freePort(t)
-	block, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", busyPort))
+	// Hold the exact wildcard endpoint under test; avoid a free-port race.
+	block, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer block.Close()
+	busyPort := block.Addr().(*net.TCPAddr).Port
 	// Switching to an occupied different port must not close/recreate the
 	// existing listener at all, even with active keep-alive connections.
 	runtime.mu.Lock()
@@ -294,4 +295,37 @@ func TestKeyValidationAndLifecycleRequest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("no quit action")
 	}
+}
+
+ // macOS regression: a 0.0.0.0 port may bind while 127.0.0.1 is already
+ // occupied. The router must reject this and preserve the old listener.
+func TestLANBindRejectsSpecificInterfacePort(t *testing.T) {
+    app, runtime, _ := runtimeFixture(t)
+    oldPort := freePort(t)
+    if err := runtime.Configure(oldPort, false); err != nil { t.Fatal(err) }
+    if err := runtime.Start(); err != nil { t.Fatal(err) }
+    before := app.auth.store.get()
+    runtime.mu.Lock()
+    listener, server := runtime.listener, runtime.server
+    runtime.mu.Unlock()
+    block, err := net.Listen("tcp4", "127.0.0.1:0")
+    if err != nil { t.Fatal(err) }
+    defer block.Close()
+    busyPort := block.Addr().(*net.TCPAddr).Port
+    if err := runtime.Configure(busyPort, true); err == nil {
+        t.Fatal("wildcard LAN bind accepted an already occupied loopback port")
+    }
+    runtime.mu.Lock()
+    unchanged := listener == runtime.listener && server == runtime.server
+    runtime.mu.Unlock()
+    if !unchanged || !runtime.Running() { t.Fatal("failed transition replaced original listener") }
+    after := app.auth.store.get()
+    if after.APIPort != before.APIPort || after.LANEnabled != before.LANEnabled {
+        t.Fatal("failed transition modified persisted network configuration")
+    }
+    c := &http.Client{Timeout: time.Second}
+    response, err := c.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", oldPort))
+    if err != nil { t.Fatalf("old API listener not reachable: %v", err) }
+    defer response.Body.Close()
+    if response.StatusCode != http.StatusOK { t.Fatalf("old listener status %d", response.StatusCode) }
 }

@@ -51,6 +51,30 @@ func apiBindAddress(port int, lan bool) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
+
+ // listenAPIListener checks specific-address collisions before a LAN wildcard bind.
+ // macOS can allow 0.0.0.0 and 127.0.0.1 listeners to coexist, routing the
+ // loopback connection to the other process even when the wildcard bind succeeds.
+func listenAPIListener(port int, lan bool) (net.Listener, error) {
+    addr := apiBindAddress(port, lan)
+    if lan {
+        seen := make(map[string]bool)
+        addresses := append([]string{"127.0.0.1"}, localIPAddrs()...)
+        for _, host := range addresses {
+            if seen[host] { continue }
+            seen[host] = true
+            probe, err := net.Listen("tcp4", net.JoinHostPort(host, strconv.Itoa(port)))
+            if err != nil {
+                return nil, fmt.Errorf("API port %d is already in use on %s: %w", port, host, err)
+            }
+            _ = probe.Close()
+        }
+    }
+    listener, err := net.Listen("tcp4", addr)
+    if err != nil { return nil, fmt.Errorf("cannot listen at %s: %w", addr, err) }
+    return listener, nil
+}
+
 func (a *APIRuntime) startLocked(port int, lan bool) error {
 	if err := validateAPIPort(port, a.adminPort); err != nil {
 		return err
@@ -58,10 +82,9 @@ func (a *APIRuntime) startLocked(port int, lan bool) error {
 	if a.listener != nil {
 		return nil
 	}
-	addr := apiBindAddress(port, lan)
-	listener, err := net.Listen("tcp4", addr)
+	listener, err := listenAPIListener(port, lan)
 	if err != nil {
-		return fmt.Errorf("cannot listen at %s: %w", addr, err)
+		return err
 	}
 	a.adoptListenerLocked(listener)
 	return nil
@@ -171,7 +194,7 @@ func (a *APIRuntime) Configure(port int, lan bool) error {
 	var candidate net.Listener
 	if wasRunning && port != prior.APIPort {
 		var err error
-		candidate, err = net.Listen("tcp4", apiBindAddress(port, lan))
+		candidate, err = listenAPIListener(port, lan)
 		if err != nil {
 			return fmt.Errorf("new API listener unavailable; previous port remains active: %w", err)
 		}
