@@ -93,6 +93,8 @@ func (s *Server) APIHandler() http.Handler {
 	mux.HandleFunc("GET /v1/models", s.routedModels)
 	mux.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/responses") })
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/chat/completions") })
+	mux.HandleFunc("POST /v1/images/generations", s.routeImages)
+	mux.HandleFunc("POST /v1/images/edits", s.routeImages)
 	mux.HandleFunc("POST /v1/contents/generations/tasks", s.routeVideoTask)
 	mux.HandleFunc("GET /v1/contents/generations/tasks/{id}", s.routeVideoTask)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +153,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/models", s.routedModels)
 	api.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/responses") })
 	api.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { s.routeInference(w, r, "/chat/completions") })
+	api.HandleFunc("POST /v1/images/generations", s.routeImages)
+	api.HandleFunc("POST /v1/images/edits", s.routeImages)
 	apiHandler := s.authMiddleware(api)
 	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.apiEnabled.Load() {

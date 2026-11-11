@@ -23,7 +23,8 @@ An **experimental**, single-user, locally administered Go adapter for [Sign in w
 - `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list. The dashboard displays the full returned model IDs, supports filtering, selecting, copying individually, or copying all IDs as newline-separated text.
 - `POST /v1/responses`: forwards supported requests; always enforces upstream `store:false` and `stream:true`. Supports streaming downstream or aggregation for non-stream callers.
 - `POST /v1/chat/completions`: **limited** compatibility layer for text, image URLs, function tools in a `namespace`, tool results, and streaming or aggregated results.
-- Only `api.openai.com/v1/models`, `api.openai.com/v1/responses`, and `auth.openai.com` OAuth/OIDC endpoints are called.
+- `POST /v1/images/generations` and `POST /v1/images/edits`: external Images APIs only, including JSON and multipart image/mask uploads; never SIWC or a billing fallback.
+- SIWC calls use only the authorized `api.openai.com/v1/models`, `api.openai.com/v1/responses`, and `auth.openai.com` OAuth/OIDC endpoints; separately configured API providers use their own public HTTPS endpoints and API keys.
 - The admin dashboard binds only to `127.0.0.1:8787`; the separate Agent API uses port `8087` by default and supports access from private LAN hosts (with API key authentication). LAN HTTP is **unencrypted**. No telemetry.
 
 ## Requirements
@@ -106,6 +107,37 @@ curl -N http://127.0.0.1:8087/v1/responses \
 ```
 
 The adapter always sends `store:false,stream:true` to the upstream SIWC route. It rejects known unsupported top-level fields and unsupported hosted tools rather than silently dropping them. It does not switch to API-key billing if the ChatGPT account is ineligible or rate limited.
+
+## OpenAI-compatible Images API for ImageStudio
+
+**Images require a separately billed external API key.** SIWC plan authorization does not support `/v1/images/*` or the hosted `image_generation` tool. The image routes never attempt to use a ChatGPT OAuth token. Use the official [Images API](https://developers.openai.com/api/reference/resources/images/methods/generate) through your paid OpenAI API organization, or another model provider that actually implements the same Images endpoints.
+
+In the local dashboard (`http://127.0.0.1:8787/ui/`), add an **openai-compatible** external provider:
+
+```text
+Provider ID: openai-api
+Display name: OpenAI API (independently billed)
+Base URL: https://api.openai.com/v1
+API Key: your own OpenAI API key, not the Provider local key or ChatGPT OAuth token
+Manual model ID: gpt-image-2.5-sunburst (only if /models does not list it)
+```
+
+Keep the ImageStudio base URL unchanged, but select an **explicitly qualified model ID**:
+
+```yaml
+base_url: http://nat-mini.local:8087/v1
+api_key: <local Agent API Key from the dashboard>
+model: openai-api/gpt-image-2.5-sunburst
+```
+
+The bridge strips `openai-api/` only when forwarding to the configured external provider. The following are supported (subject to the selected vendor's API and model capabilities):
+
+- `POST /v1/images/generations`: `application/json`; forwards the prompt, size, quality, output format, `n`, streaming controls and other provider-supported fields.
+- `POST /v1/images/edits`: `application/json` (image URL/file references), or `multipart/form-data` with `image`, repeated `image[]`, `mask`/`markup`, prompt and additional fields. Files and part names are preserved; only the `model` field is rewritten.
+- JSON/base64 result bodies (including `data[].b64_json`), HTTP errors, and event-stream responses are passed through; request bodies are capped at **128 MiB**. Multipart files are staged in private temporary files and deleted when the request finishes. Responses stream without buffering images in RAM.
+
+**Fail closed:** an unqualified model name, SIWC model, missing/disabled external model, unsupported provider kind, or invalid upload returns an error. No billing fallback and no automatic image-model discovery by guessing a vendor. Add missing image models to the provider's *manual models* list. ImageStudio's prompt optimization and image descriptions still use a separate text/vision Chat Completions model. **Local LAN HTTP is not encrypted**, so don't send private images or API keys over untrusted networks; use HTTPS or a secure tunnel if needed. These endpoints have mock transport tests, not live charged image-generation tests.
+
 
 ## Security & limitations
 

@@ -46,7 +46,39 @@ api_key: <网页中复制的本地API-Key>
 model: <网页中查询到的模型ID>
 ```
 
-Provider 目前提供：`GET /v1/models`、`POST /v1/chat/completions`（部分兼容）、`POST /v1/responses`。部分 SDK 自动带的参数（如 `temperature`、`max_completion_tokens`、`response_format`）当前会被明确拒绝；复杂 Agent 需要额外兼容测试。原生 Responses API 更适合保留高级推理项。
+Provider 目前提供：`GET /v1/models`、`POST /v1/chat/completions`（部分兼容）、`POST /v1/responses`、`POST /v1/images/generations` 与 `POST /v1/images/edits`（Images 只用于独立 API Key 的外部模型商）。部分 SDK 自动带的参数（如 `temperature`、`max_completion_tokens`、`response_format`）当前会被明确拒绝；复杂 Agent 需要额外兼容测试。原生 Responses API 更适合保留高级推理项。
+
+### ImageStudio 生图与局部编辑接入
+
+**生图只使用外部模型商自己的独立 API Key 和计费，绝不使用 SIWC 订阅 Token。** SIWC 当前不开放托管的 `image_generation` 工具，也不允许通过本项目的 `/v1/images/*` 使用 ChatGPT 套餐生图。
+
+在本地管理网页 `http://127.0.0.1:8787/ui/` 的 **额外模型商管理** 中新增：
+
+```text
+模型商 ID：openai-api
+类型：OpenAI 兼容 API
+Base URL：https://api.openai.com/v1
+API Key：你在 OpenAI 开发者平台购买/启用的独立 API Key
+自定义模型 ID：gpt-image-2.5-sunburst（若自动模型目录没有列出时添加）
+```
+
+ImageStudio 的配置可保持原 Base URL，只把模型改为带供应商前缀的名称：
+
+```yaml
+base_url: http://nat-mini.local:8087/v1
+api_key: <在 Provider 网页复制的本地 Agent API Key>
+model: openai-api/gpt-image-2.5-sunburst
+```
+
+Provider 新增两个标准接口：
+
+- `POST /v1/images/generations`：JSON 文生图，保留 `prompt`、`size`、`quality`、`n` 等上游支持的参数。
+- `POST /v1/images/edits`：支持 JSON 图片引用，也支持 `multipart/form-data` 的图片文件（`image` 或多个 `image[]`）、`mask` 蒙版、`markup`、提示词等。上传图片与文件名会原样转发，仅替换模型前缀。
+
+请求最多 **128 MiB**，上游返回的标准图片 JSON（含 `data[].b64_json`）、错误码和 SSE 流会透传。大图片上传使用本机临时文件，完成后清理。仅接受明确指向外部模型商的 `模型商ID/模型ID`；模型未列入目录时需手工添加，否则返回错误，不会尝试 SIWC 或切换其他付费商。提示词优化和图片描述仍需使用单独的文本/视觉模型，不能将生图模型当聊天模型使用。
+
+**隐私及费用提示：** 图片、蒙版、提示词会发送给你选择的付费模型商。局域网 HTTP 未加密，请仅在可信网络使用，涉及敏感图片应使用 HTTPS 或安全隧道。此功能已经通过模拟接口测试，但未实际发起产生费用的图片生成请求。
+
 
 ### 安全与状态
 
