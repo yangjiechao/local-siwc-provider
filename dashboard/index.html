@@ -69,7 +69,7 @@
         <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">先选云厂商或本地推理服务，再配置模型。自动填写官方 API 地址，只有自定义服务需要输入 URL；厂商 Logo 与模型目录会一起显示。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
         <div class="notice"><span>⚠</span><p><strong>重要合规提示：</strong> SIWC 订阅仅允许授权应用自身使用，不能因为本软件开源就转售、共享订阅或为其他无关工具提供通用 ChatGPT API。额外模型商使用你单独购买或申请的 API Key，按各自条款计费；不要使用多账号绕过限额。详见 <a href="https://github.com/yangjiechao/local-siwc-provider/blob/main/NOTICE-SIWC-COMPLIANCE.md" target="_blank" rel="noopener noreferrer">合规与风险声明</a>。</p></div>
         <div class="provider-toolbar">
-          <div class="provider-toolbar-info"><strong id="providerSummary">尚未配置额外模型商</strong><span>密钥保存在本地，不会在列表里回显。</span></div>
+          <div class="provider-toolbar-info"><strong id="providerSummary">尚未配置额外模型商</strong><span>匹配优先级：SIWC 固定第一位，其后按列表排序。使用 ↑ / ↓ 调整，密钥不会回显。</span></div>
           <div class="provider-toolbar-actions">
             <label for="providerSearch" class="provider-search-label"><span class="visually-hidden">搜索模型商</span><input id="providerSearch" class="text-field" type="search" placeholder="搜索名称或模型商 ID" autocomplete="off"></label>
             <button id="refreshProvidersBtn" class="btn outline" type="button">刷新全部模型 ↻</button>
@@ -101,7 +101,7 @@
             <div class="provider-actions"><button type="submit" class="btn dark" id="saveProviderBtn">保存模型商</button><button type="button" id="resetProviderBtn" class="btn outline">取消</button></div>
           </form>
         </dialog>
-        <p class="security-hint">模型 ID 推荐使用 <code>模型商ID/模型ID</code>，如 <code>deepseek/deepseek-flash</code>。不带前缀时优先匹配 SIWC；多个外部模型商同名则要求指定前缀。Images 生图接口使用 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，必须指定外部模型商，如 <code>openai-api/gpt-image-2.5-sunburst</code>，使用独立 API Key 计费，不支持 SIWC 订阅生图。Seedance 不是聊天模型，使用 <code>/v1/contents/generations/tasks</code> 异步任务接口。所有额外模型商按其自己的账单计费，绝不因 SIWC 限额自动切换。</p>
+        <p class="security-hint">模型 ID 推荐使用 <code>模型商ID/模型ID</code>，如 <code>deepseek/deepseek-flash</code>。不带前缀时先查 SIWC，再按列表自上而下匹配已启用厂商；同名模型选择优先级最高的厂商。SIWC 模型目录未确认时不会意外切换到收费 API。Images 生图接口使用 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，必须指定外部模型商，如 <code>openai-api/gpt-image-2.5-sunburst</code>，使用独立 API Key 计费，不支持 SIWC 订阅生图。Seedance 不是聊天模型，使用 <code>/v1/contents/generations/tasks</code> 异步任务接口。所有额外模型商按其自己的账单计费，绝不因 SIWC 限额自动切换。</p>
       </section>
 
       <section class="panel model-directory" aria-labelledby="modelDirectoryTitle">

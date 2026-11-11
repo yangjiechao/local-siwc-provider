@@ -220,3 +220,10 @@ Cloud presets: OpenAI API, DeepSeek, OpenRouter, Groq, xAI, Alibaba Qwen (Beijin
 **Security:** Cloud endpoints still require public HTTPS. A custom local endpoint must explicitly specify a private/loopback IP, localhost or .local host and a port. DNS is validated and pinned on each new connection; redirects and proxies are disabled. Remote LAN inference must be deliberately configured by the user, who is responsible for protecting the LAN endpoint. Never expose an unauthenticated local model server to the public Internet. Support for Images, Responses and tool calls depends on the installed inference server and model. No automatic SIWC-to-paid fallback exists.
 
 **Icons:** Brand logos are served from bundled local assets sourced from [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT). Trademarks belong to their respective owners, and their presence does not indicate endorsement.
+
+
+### Provider priority and duplicate model IDs
+
+The provider list has accessible **Up / Down** controls. Provider order is saved atomically and survives restarts. SIWC always wins when its authenticated catalog contains a model; otherwise the first enabled provider in user order wins for unprefixed model IDs. Explicit `provider-id/model-id` bypasses this selection order. Filtering disables reordering to avoid moving an item against hidden neighbors. A provider failure never triggers retry/failover to another, potentially paid, provider. When an SIWC session exists but its catalog cannot be confirmed, unprefixed models are blocked rather than silently forwarded to charged providers.
+
+The local dashboard now uses a calm navy/slate-blue palette, preserving the existing controls and locally bundled provider logos.

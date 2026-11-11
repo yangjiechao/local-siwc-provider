@@ -470,12 +470,27 @@ async function loadProviderPresets() {
     el.append(group);
   }
 }
+// Reordering is persisted by the server; the inference router reads this same
+// sequence. Filtering must not hide neighbors during a reorder operation.
+async function moveProviderPriority(id, offset) {
+  const index=configuredProviders.findIndex(p=>p.id===id);
+  const next=index+offset;
+  if (index<0||next<0||next>=configuredProviders.length) return;
+  const ids=configuredProviders.map(p=>p.id);
+  [ids[index],ids[next]]=[ids[next],ids[index]];
+  await call('providers/reorder',{method:'POST',body:{ids}});
+  await loadProviders(false);
+  toast('已保存优先级：同名模型将匹配列表里靠前的模型商');
+}
+
 function renderProviders() {
   const host=$('providerList');host.replaceChildren();
   const count=configuredProviders.length,enabled=configuredProviders.filter(x=>x.enabled).length;
   $('providerSummary').textContent=count?count+' 个模型商 · '+enabled+' 个已启用':'尚未配置额外模型商';
   const q=$('providerSearch').value.trim().toLocaleLowerCase();
   const filtered=configuredProviders.filter(x=>(x.id+' '+x.name+' '+x.kind+' '+x.base_url).toLocaleLowerCase().includes(q));
+  const canReorder=q.length===0;
+  $('providerSearch').title=canReorder?'输入名称可筛选，清空搜索可调整优先级':'清空搜索才能调整完整的模型商顺序';
   if (!filtered.length) {
     const p=document.createElement('p');p.className='provider-empty';
     p.textContent=count?'没有符合搜索条件的模型商。':'暂无额外模型商，点击「新增模型商」添加。';
@@ -487,6 +502,10 @@ function renderProviders() {
     const titleArea=document.createElement('div');titleArea.className='provider-identity-text';
     const name=document.createElement('div');name.className='name';
     name.textContent=item.name+' ('+item.id+')';
+    const priority=document.createElement('span');priority.className='provider-priority';
+    priority.textContent='P'+(configuredProviders.findIndex(p=>p.id===item.id)+1);
+    priority.title='SIWC 始终最优先，这里显示外部供应商顺序';
+    name.prepend(priority);
     const badge=document.createElement('span');badge.className='provider-status '+(item.enabled?'enabled':'disabled');
     badge.textContent=item.enabled?'已启用':'已禁用';name.append(badge);
     const meta=document.createElement('div');meta.className='details';
@@ -508,6 +527,18 @@ function renderProviders() {
     const preset=findPreset(resolvedPreset(item));
     info.append(makeBrandLogo(preset?.logo,item.name),titleArea);
     const actions=document.createElement('div');actions.className='provider-actions';
+    const ordering=document.createElement('div');ordering.className='provider-order-actions';
+    ordering.setAttribute('role','group');
+    ordering.setAttribute('aria-label','调整 '+item.name+' 的优先级');
+    const index=configuredProviders.findIndex(p=>p.id===item.id);
+    const up=providerButton('↑',()=>perform('提高模型商优先级',()=>moveProviderPriority(item.id,-1)));
+    const down=providerButton('↓',()=>perform('降低模型商优先级',()=>moveProviderPriority(item.id,1)));
+    up.classList.add('provider-order-button');down.classList.add('provider-order-button');
+    up.title='上移 '+item.name;down.title='下移 '+item.name;
+    up.setAttribute('aria-label',up.title);down.setAttribute('aria-label',down.title);
+    up.disabled=!canReorder||index===0;
+    down.disabled=!canReorder||index===configuredProviders.length-1;
+    ordering.append(up,down);actions.append(ordering);
     actions.append(providerButton(item.enabled?'禁用':'启用',()=>perform('切换模型商',async()=>{
       const next=!item.enabled;
       await call('providers',{method:'POST',body:{

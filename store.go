@@ -246,6 +246,38 @@ func (s *Store) upsertProvider(p ExternalProvider) error {
 	return nil
 }
 
+// reorderProviders changes only the priority of saved providers, preserving
+// all secrets and endpoints. Reject stale/partial requests rather than dropping
+// providers or treating a reorder request as a configuration replacement.
+func (s *Store) reorderProviders(ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.state.Providers
+	if len(ids) != len(old) {
+		return errors.New("provider order must include every configured provider exactly once")
+	}
+	byID := make(map[string]ExternalProvider, len(old))
+	for _, p := range old {
+		byID[p.ID] = p
+	}
+	next := make([]ExternalProvider, 0, len(old))
+	seen := make(map[string]bool, len(old))
+	for _, id := range ids {
+		p, ok := byID[id]
+		if !ok || seen[id] {
+			return errors.New("invalid provider order: duplicate or unknown provider ID")
+		}
+		seen[id] = true
+		next = append(next, p)
+	}
+	s.state.Providers = next
+	if err := s.saveLocked(); err != nil {
+		s.state.Providers = old
+		return err
+	}
+	return nil
+}
+
 func (s *Store) deleteProvider(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

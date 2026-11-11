@@ -66,6 +66,7 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/api/provider-presets", d.authorized(d.listProviderPresets))
 	mux.HandleFunc("POST /ui/api/providers", d.authorized(d.saveProvider))
 	mux.HandleFunc("POST /ui/api/providers/delete", d.authorized(d.deleteProvider))
+	mux.HandleFunc("POST /ui/api/providers/reorder", d.authorized(d.reorderProviders))
 	mux.HandleFunc("POST /ui/api/providers/refresh", d.authorized(d.refreshProviders))
 	mux.HandleFunc("GET /ui/api/update", d.authorized(d.updateStatus))
 	mux.HandleFunc("POST /ui/api/update/check", d.authorized(d.checkUpdate))

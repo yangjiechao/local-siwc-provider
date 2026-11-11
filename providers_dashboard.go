@@ -52,6 +52,23 @@ func (d *Dashboard) deleteProvider(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// reorderProviders is loopback dashboard-only, protected by the existing
+// admin session and CSRF middleware. It never reads/writes vendor API secrets.
+func (d *Dashboard) reorderProviders(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid provider ordering request")
+		return
+	}
+	if err := d.server.auth.store.reorderProviders(body.IDs); err != nil {
+		writeError(w, 409, "invalid_order", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "providers": d.server.router.Providers()})
+}
+
 func (d *Dashboard) refreshProviders(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 90*time.Second)
 	defer cancel()

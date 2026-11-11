@@ -371,9 +371,10 @@ func (r *Router) OwnModels() ([]string, bool, string) {
 	return append([]string(nil), r.snap.own...), r.snap.ownOK, r.snap.ownError
 }
 
-// A unique, unprefixed external model is supported only after SIWC discovery
-// has succeeded, or when the user has no SIWC session. This avoids accidental
-// charged fallback if SIWC model discovery temporarily fails.
+// Unprefixed models prefer SIWC, then the first enabled external provider in
+// persisted user-defined order. If SIWC discovery is unavailable while signed
+// in, never infer absence and silently route a request to a charged provider.
+// Explicit provider/model requests are pinned to exactly that provider.
 func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 	state := r.store.get()
 	r.mu.RLock()
@@ -412,23 +413,16 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 			}
 		}
 	}
-	var chosen *ExternalProvider
 	for _, p := range state.Providers {
 		if !p.Enabled {
 			continue
 		}
 		for _, x := range modelsForProvider(p, s.providers[p.ID]) {
 			if x == model {
-				if chosen != nil {
-					return nil, "", errors.New("ambiguous model ID: use provider/model")
-				}
 				cp := p
-				chosen = &cp
+				return &cp, model, nil
 			}
 		}
-	}
-	if chosen != nil {
-		return chosen, model, nil
 	}
 	return nil, "", errors.New("unknown model: refresh catalog or add it to a provider's manual models")
 }

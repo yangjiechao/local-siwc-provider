@@ -109,9 +109,9 @@ func TestProviderCatalogAndRouting(t *testing.T) {
 	if err != nil || p.ID != "deepseek" || real != "deepseek-flash" {
 		t.Fatalf("wrong route: %#v %s %v", p, real, err)
 	}
-	_, _, err = r.Resolve("duplicate")
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatal("ambiguous model routed without namespace")
+	p, _, err = r.Resolve("duplicate")
+	if err != nil || p == nil || p.ID != "deepseek" {
+		t.Fatalf("duplicate model must route to first provider: %+v %v", p, err)
 	}
 	p, _, err = r.Resolve("deepseek-flash")
 	if err != nil || p.ID != "deepseek" {
