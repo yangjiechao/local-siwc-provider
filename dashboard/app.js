@@ -7,6 +7,12 @@ let keyCache = null;
 let keyShown = false;
 let modelList = [];
 let configuredProviders = [];
+// The DOM is refreshed from server data; open panels are a UI preference,
+// not provider config. Keep them stable across catalog polls and reorders.
+const expandedProviderModels = new Set();
+const providerModelScroll = new Map();
+let providersHaveRendered = false;
+let siwcRenderFingerprint = null;
 let siwcModels = [];
 let siwcDisabledModels = [];
 let siwcSignedIn = false;
@@ -546,8 +552,22 @@ function renderSIWCModelToggles() {
   }
 }
 
+function captureExpandedProviderModels() {
+  // Capture the currently rendered list before replacing nodes. Preserve
+  // remembered state for filtered-out providers until they become visible.
+  for (const panel of $('providerList').querySelectorAll('details.provider-model-details[data-provider-id]')) {
+    const id=panel.dataset.providerId;
+    if (panel.open) expandedProviderModels.add(id);
+    else expandedProviderModels.delete(id);
+    const grid=panel.querySelector('.model-toggle-grid');
+    if (grid) providerModelScroll.set(id,grid.scrollTop);
+  }
+}
+
 function renderProviders() {
-  const host=$('providerList');host.replaceChildren();
+  const host=$('providerList');
+  captureExpandedProviderModels();
+  host.replaceChildren();
   const count=configuredProviders.length,enabled=configuredProviders.filter(x=>x.enabled).length;
   $('providerSummary').textContent=count?count+' 个模型商 · '+enabled+' 个已启用':'尚未配置额外模型商';
   const q=$('providerSearch').value.trim().toLocaleLowerCase();
@@ -582,6 +602,12 @@ function renderProviders() {
     }
     if (Array.isArray(item.models)&&item.models.length) {
       const models=document.createElement('details');models.className='provider-model-details';
+      models.dataset.providerId=item.id;
+      models.open=expandedProviderModels.has(item.id);
+      models.addEventListener('toggle',()=>{
+        if(models.open) expandedProviderModels.add(item.id);
+        else expandedProviderModels.delete(item.id);
+      });
       const disabled=Array.isArray(item.disabled_models)?item.disabled_models:[];
       const activeCount=item.models.filter(m=>!disabled.includes(m)).length;
       const summary=document.createElement('summary');
@@ -627,19 +653,37 @@ function renderProviders() {
       });
     }));
     row.append(info,actions);host.append(row);
+    // Restore scroll only after insertion, so the expanded grid has layout.
+    const expandedGrid=row.querySelector('details.provider-model-details[open] .model-toggle-grid');
+    if (expandedGrid) expandedGrid.scrollTop=providerModelScroll.get(item.id)||0;
   }
 }
 async function loadProviders(withModels=true) {
   if (!unlocked) return;
   const data=await call('providers');
-  configuredProviders=Array.isArray(data.providers)?data.providers:[];
+  const nextProviders=Array.isArray(data.providers)?data.providers:[];
+  const providersChanged=JSON.stringify(configuredProviders)!==JSON.stringify(nextProviders);
+  configuredProviders=nextProviders;
   siwcModels=Array.isArray(data.siwc_models)?data.siwc_models:[];
   siwcDisabledModels=Array.isArray(data.siwc_disabled_models)?data.siwc_disabled_models:[];
   siwcSignedIn=!!data.siwc_signed_in;
   siwcCatalogOK=!!data.siwc_catalog_ok;
   siwcCatalogError=data.siwc_error||'';
-  renderSIWCModelToggles();
-  renderProviders();
+  const nextSIWCFingerprint=JSON.stringify([siwcModels,siwcDisabledModels,siwcSignedIn,siwcCatalogOK,siwcCatalogError]);
+  if(nextSIWCFingerprint!==siwcRenderFingerprint){
+    renderSIWCModelToggles();
+    siwcRenderFingerprint=nextSIWCFingerprint;
+  }
+  // Most 15-second polls return identical provider data. Avoid replacing
+  // checkboxes or details at all when nothing changed.
+  if(!providersHaveRendered||providersChanged){
+    renderProviders();
+    providersHaveRendered=true;
+  }
+  // Expansions of removed providers must not linger forever.
+  const existingIDs=new Set(configuredProviders.map(p=>p.id));
+  for(const id of expandedProviderModels) if(!existingIDs.has(id)) expandedProviderModels.delete(id);
+  for(const id of providerModelScroll.keys()) if(!existingIDs.has(id)) providerModelScroll.delete(id);
   if (withModels&&Array.isArray(data.models)){
     modelList=data.models.map(x=>x.id).filter(Boolean);
     modelsLoaded=true;updateModels();
