@@ -469,6 +469,7 @@ func (r *Router) proxyExternalTo(w http.ResponseWriter, req *http.Request, p Ext
 		writeError(w, 502, "provider_redirect", "Provider redirect refused")
 		return
 	}
+	forwardRateLimitHeaders(w.Header(), response.Header)
 	ct := response.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "text/event-stream") {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -540,6 +541,18 @@ func (s *Server) routeInference(w http.ResponseWriter, req *http.Request, route 
 	if err != nil {
 		writeError(w, 404, "model_not_found", err.Error())
 		return
+	}
+	// Record only request metadata. The raw input and credentials never leave this handler.
+	if s.diagnostics != nil {
+		providerID := "siwc"
+		if provider != nil {
+			providerID = provider.ID
+		}
+		span := s.diagnostics.begin(providerID, actual, route, len(b), countInputItems(body))
+		observer := &diagnosticResponseWriter{ResponseWriter: w}
+		w = observer
+		defer func() { span.finish(observer.status) }()
+		req = req.Clone(context.WithValue(req.Context(), diagnosticContextKey{}, span))
 	}
 	body["model"] = actual
 	newBody, err := json.Marshal(body)
