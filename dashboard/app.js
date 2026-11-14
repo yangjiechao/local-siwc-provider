@@ -830,7 +830,7 @@ async function loadDiagnostics() {
       record.endpoint,
       (record.request_bytes / 1024).toFixed(1) + ' KiB',
       record.duration_ms + ' ms',
-      String(record.status)
+      String(record.status) + (record.retry_count ? ' · 重试' + record.retry_count + '次' : '')
     ];
     for (const value of values) row.insertCell().textContent = value;
     row.cells[5].className = record.status === 429 ? 'diag-http-error' : 'diag-http-ok';
