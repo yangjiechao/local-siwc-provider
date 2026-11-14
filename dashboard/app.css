@@ -187,8 +187,8 @@ body{background:linear-gradient(180deg,#f1f5fa 0%,#f5f7fb 450px,#f6f8fb 100%);co
 /* Tabbed console: preserve a compact overview and move advanced controls to focused pages. */
 .dashboard-tabs{display:flex;flex-wrap:wrap;gap:8px;padding:20px 0 12px;border-bottom:1px solid var(--line);margin-bottom:24px}
 .dashboard-tab{appearance:none;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--muted);font:inherit;font-weight:650;padding:11px 18px;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
-.dashboard-tab:hover{background:rgba(68,113,164,.09);color:var(--text)}
-.dashboard-tab.is-active{color:var(--text);background:rgba(76,127,185,.13);border-color:rgba(91,143,202,.35)}
+.dashboard-tab:hover{background:rgba(68,113,164,.09);color:var(--ink)}
+.dashboard-tab.is-active{color:var(--ink);background:rgba(76,127,185,.13);border-color:rgba(91,143,202,.35)}
 .dashboard-tab:focus-visible{outline:3px solid #6794d2;outline-offset:2px}
 .tab-panel[hidden]{display:none!important}
 .tab-panel>.panel:first-child{margin-top:0}
