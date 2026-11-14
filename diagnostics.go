@@ -128,3 +128,11 @@ func (w *diagnosticResponseWriter) Flush() {
 func (w *diagnosticResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
+
+func (d *Dashboard) requestDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
+	if d.server.diagnostics == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "Request diagnostics unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, d.server.diagnostics.snapshot())
+}
