@@ -25,6 +25,14 @@
     </section>
 
     <div id="content" hidden>
+      <nav class="dashboard-tabs" role="tablist" aria-label="Provider 功能导航">
+        <button id="nav-overview" type="button" role="tab" class="dashboard-tab is-active" aria-controls="tab-overview" aria-selected="true" tabindex="0" data-tab-target="overview">概览</button>
+        <button id="nav-models" type="button" role="tab" class="dashboard-tab" aria-controls="tab-models" aria-selected="false" tabindex="-1" data-tab-target="models">模型与路由</button>
+        <button id="nav-keys" type="button" role="tab" class="dashboard-tab" aria-controls="tab-keys" aria-selected="false" tabindex="-1" data-tab-target="keys">API Key</button>
+        <button id="nav-settings" type="button" role="tab" class="dashboard-tab" aria-controls="tab-settings" aria-selected="false" tabindex="-1" data-tab-target="settings">运行设置</button>
+        <button id="nav-diagnostics" type="button" role="tab" class="dashboard-tab" aria-controls="tab-diagnostics" aria-selected="false" tabindex="-1" data-tab-target="diagnostics">请求诊断</button>
+      </nav>
+      <div id="tab-overview" class="tab-panel" role="tabpanel" aria-labelledby="nav-overview">
       <section class="hero">
         <div class="hero-text"><div class="eyebrow"><span class="spark"></span> SELF-HOSTED CONTROL PLANE · 0.2 DEV PREVIEW</div><h1>连接模型，<br><em>让 Agent 专注执行。</em></h1>
           <p>在一处完成 ChatGPT 授权、API 服务管理和模型发现。你的 OAuth 凭据只存于本机，不经由第三方中转。</p>
@@ -50,7 +58,7 @@
         </section>
 
         <section class="panel" aria-labelledby="keyTitle"><div class="panel-top"><span class="step-num">03</span><span class="panel-symbol">⌁</span></div><h3 id="keyTitle">管理本地 API Key</h3><p class="desc">创建和管理应用调用所需的 Key。</p>
-          <a class="btn outline" href="#agentKeysTitle">管理 API Key ↓</a>
+          <button class="btn outline" type="button" data-open-tab="keys">管理 API Key →</button>
         </section>
 
         <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
@@ -60,16 +68,21 @@
         </section>
       </div>
 
-      <section class="panel provider-panel" aria-labelledby="agentKeysTitle">
-        <div class="section-header"><div><div class="overline">API KEYS</div><h2 id="agentKeysTitle">本地 API Key</h2><p class="subheading">所有 Key 访问同一个 API；可为不同应用创建和撤销独立 Key。</p></div></div>
-        <div id="agentKeyList" class="provider-list" aria-live="polite"><div id="agentKeyRows"></div></div>
-        <form id="agentKeyForm" class="agent-key-form" autocomplete="off">
-          <label for="agentKeyName">应用名称</label><input id="agentKeyName" class="text-field" maxlength="80" required placeholder="例如：生图工作台">
-          <label for="agentKeyCustom">自定义 Key（选填）</label><input id="agentKeyCustom" class="text-field" type="password" autocomplete="new-password" minlength="16" maxlength="256" spellcheck="false" placeholder="留空自动生成；填写 16–256 个不含空格的 ASCII 字符">
-          <button class="btn dark" type="submit">添加 Key</button>
-        </form>
+      <section class="lower-grid">
+        <div class="panel wide"><div class="section-header"><div><div class="overline">AGENT CONNECTION</div><h2>连接你的 Agent</h2></div><span class="tag">OPENAI COMPATIBLE</span></div>
+          <p class="subheading">在 Harness 的配置中填写以下参数，Provider 不会修改你的 Agent 代码。</p>
+          <div class="settings"><div class="setting"><div class="setting-name">Base URL</div><code id="baseURL">http://127.0.0.1:8087/v1</code><button class="copy-mini" data-copy="base" type="button">复制</button></div>
+            <div class="setting"><div class="setting-name">API Key</div><code>使用上方生成的本地 Key</code><button class="copy-mini" data-copy="key" type="button">复制</button></div>
+            <div class="setting"><div class="setting-name">Model</div><select id="modelSelect" aria-label="选择模型"><option value="">请先查询模型目录</option></select><button class="copy-mini" data-copy="model" type="button">复制</button></div>
+          </div>
+          <div class="config-actions"><button id="copyConfigBtn" class="btn dark" type="button">复制 Agent 配置 <span>⧉</span></button><span>适配支持情况取决于 Agent 的 SDK 和请求参数。</span></div>
+        </div>
+        <div class="panel mini-panel"><div class="overline">SERVICE INFO</div><h2>运行信息</h2><div class="fact"><span>API 绑定</span><strong id="bindFact">0.0.0.0（局域网）</strong></div><div class="fact"><span>API 端口</span><strong id="portFact">8087</strong></div><div class="fact"><span>登录账号</span><strong id="accountFact">未登录</strong></div><div class="fact"><span>Token 过期</span><strong id="expiryFact">—</strong></div><div class="fact"><span>上游</span><strong>Responses API</strong></div>
+          <div class="notice"><span>ⓘ</span><p>这是开发预览版。实际 SIWC 资格、模型权限和复杂工具调用还需要实测。</p></div></div>
       </section>
 
+      </div>
+      <div id="tab-models" class="tab-panel" role="tabpanel" aria-labelledby="nav-models" hidden>
       <section class="panel provider-panel" aria-labelledby="providerTitle">
         <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">先选云厂商或本地推理服务，再配置模型。自动填写官方 API 地址，只有自定义服务需要输入 URL；厂商 Logo、模型独立勾选与模型目录一起显示。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
         <div class="notice"><span>⚠</span><p><strong>重要合规提示：</strong> SIWC 订阅仅允许授权应用自身使用，不能因为本软件开源就转售、共享订阅或为其他无关工具提供通用 ChatGPT API。额外模型商使用你单独购买或申请的 API Key，按各自条款计费；不要使用多账号绕过限额。详见 <a href="https://github.com/yangjiechao/local-siwc-provider/blob/main/NOTICE-SIWC-COMPLIANCE.md" target="_blank" rel="noopener noreferrer">合规与风险声明</a>。</p></div>
@@ -132,6 +145,33 @@
         <ul id="modelRows" class="model-list" aria-label="可用模型 ID 列表"></ul>
       </section>
 
+      </div>
+      <div id="tab-keys" class="tab-panel" role="tabpanel" aria-labelledby="nav-keys" hidden>
+      <section class="panel provider-panel" aria-labelledby="agentKeysTitle">
+        <div class="section-header"><div><div class="overline">API KEYS</div><h2 id="agentKeysTitle">本地 API Key</h2><p class="subheading">所有 Key 访问同一个 API；可为不同应用创建和撤销独立 Key。</p></div></div>
+        <div id="agentKeyList" class="provider-list" aria-live="polite"><div id="agentKeyRows"></div></div>
+        <form id="agentKeyForm" class="agent-key-form" autocomplete="off">
+          <label for="agentKeyName">应用名称</label><input id="agentKeyName" class="text-field" maxlength="80" required placeholder="例如：生图工作台">
+          <label for="agentKeyCustom">自定义 Key（选填）</label><input id="agentKeyCustom" class="text-field" type="password" autocomplete="new-password" minlength="16" maxlength="256" spellcheck="false" placeholder="留空自动生成；填写 16–256 个不含空格的 ASCII 字符">
+          <button class="btn dark" type="submit">添加 Key</button>
+        </form>
+      </section>
+
+      </div>
+      <div id="tab-settings" class="tab-panel" role="tabpanel" aria-labelledby="nav-settings" hidden>
+      <section class="panel network-panel" aria-labelledby="networkTitle">
+        <div class="section-header"><div><div class="overline">NETWORK &amp; LIFECYCLE</div><h2 id="networkTitle">端口、局域网与运行控制</h2></div><span class="tag">DASHBOARD 127.0.0.1:8787</span></div>
+        <p class="subheading">管理页面始终仅本机可访问；Agent API 默认使用 <code>8087</code>。修改 API 端口并保存后，服务会自动在新端口重新监听。</p>
+        <div class="network-grid">
+          <label class="network-field" for="apiPort"><span>Agent API 端口</span><input id="apiPort" class="text-field" inputmode="numeric" type="number" min="1" max="65535" value="8087"></label>
+          <label class="check-field"><input id="lanSwitch" type="checkbox" checked><span>允许同一局域网的设备访问 API</span></label>
+          <button id="saveNetworkBtn" type="button" class="btn dark">保存端口和网络设置</button>
+        </div>
+        <div class="lan-address"><strong>Mac / Bonjour 局域网地址（候选）</strong><code id="lanURL">登录后显示</code><button id="copyLanBtn" type="button" class="copy-mini">复制</button></div>
+        <p class="security-hint" id="lanHint">局域网 HTTP 未加密，会传输你的 API Key。请仅在可信的家庭或办公网络使用，不要映射到公网；.local 需要设备支持 Bonjour/mDNS。</p>
+        <div class="lifecycle-actions"><button id="restartProgramBtn" type="button" class="btn outline">重启整个程序 ↻</button><button id="quitProgramBtn" type="button" class="btn danger">退出 Provider ■</button></div>
+      </section>
+
       <section class="panel update-panel" aria-labelledby="updateTitle">
         <div class="section-header"><div><div class="overline">VERSION &amp; UPDATES</div><h2 id="updateTitle">检查更新</h2><p class="subheading">比较当前程序与 GitHub main 分支的提交版本。更新前会检查工作区并在隔离目录完成测试和编译。</p></div><span id="updateBadge" class="tag">尚未检查</span></div>
         <div class="update-version-grid">
@@ -147,32 +187,28 @@
         <p class="security-hint">仅在官方仓库的干净 main 分支上提供一键更新。需要 Git 和 Go；更新会中断正在运行的 Agent 请求，但不会清除保存在本机的账号、端口或 API Key。</p>
       </section>
 
-      <section class="panel network-panel" aria-labelledby="networkTitle">
-        <div class="section-header"><div><div class="overline">NETWORK &amp; LIFECYCLE</div><h2 id="networkTitle">端口、局域网与运行控制</h2></div><span class="tag">DASHBOARD 127.0.0.1:8787</span></div>
-        <p class="subheading">管理页面始终仅本机可访问；Agent API 默认使用 <code>8087</code>。修改 API 端口并保存后，服务会自动在新端口重新监听。</p>
-        <div class="network-grid">
-          <label class="network-field" for="apiPort"><span>Agent API 端口</span><input id="apiPort" class="text-field" inputmode="numeric" type="number" min="1" max="65535" value="8087"></label>
-          <label class="check-field"><input id="lanSwitch" type="checkbox" checked><span>允许同一局域网的设备访问 API</span></label>
-          <button id="saveNetworkBtn" type="button" class="btn dark">保存端口和网络设置</button>
+      </div>
+      <div id="tab-diagnostics" class="tab-panel" role="tabpanel" aria-labelledby="nav-diagnostics" hidden>
+      <section class="panel diagnostics-panel" aria-labelledby="diagnosticsTitle">
+        <div class="section-header">
+          <div><div class="overline">REQUEST DIAGNOSTICS</div><h2 id="diagnosticsTitle">请求诊断与限流</h2>
+            <p class="subheading">查看最近的模型请求、429 限流和耗时。只在此 Tab 打开时刷新，不收集提示词、响应正文或 API Key。</p>
+          </div><button id="refreshDiagnosticsBtn" type="button" class="btn outline">刷新诊断 ↻</button>
         </div>
-        <div class="lan-address"><strong>Mac / Bonjour 局域网地址（候选）</strong><code id="lanURL">登录后显示</code><button id="copyLanBtn" type="button" class="copy-mini">复制</button></div>
-        <p class="security-hint" id="lanHint">局域网 HTTP 未加密，会传输你的 API Key。请仅在可信的家庭或办公网络使用，不要映射到公网；.local 需要设备支持 Bonjour/mDNS。</p>
-        <div class="lifecycle-actions"><button id="restartProgramBtn" type="button" class="btn outline">重启整个程序 ↻</button><button id="quitProgramBtn" type="button" class="btn danger">退出 Provider ■</button></div>
-      </section>
-
-      <section class="lower-grid">
-        <div class="panel wide"><div class="section-header"><div><div class="overline">AGENT CONNECTION</div><h2>连接你的 Agent</h2></div><span class="tag">OPENAI COMPATIBLE</span></div>
-          <p class="subheading">在 Harness 的配置中填写以下参数，Provider 不会修改你的 Agent 代码。</p>
-          <div class="settings"><div class="setting"><div class="setting-name">Base URL</div><code id="baseURL">http://127.0.0.1:8087/v1</code><button class="copy-mini" data-copy="base" type="button">复制</button></div>
-            <div class="setting"><div class="setting-name">API Key</div><code>使用上方生成的本地 Key</code><button class="copy-mini" data-copy="key" type="button">复制</button></div>
-            <div class="setting"><div class="setting-name">Model</div><select id="modelSelect" aria-label="选择模型"><option value="">请先查询模型目录</option></select><button class="copy-mini" data-copy="model" type="button">复制</button></div>
-          </div>
-          <div class="config-actions"><button id="copyConfigBtn" class="btn dark" type="button">复制 Agent 配置 <span>⧉</span></button><span>适配支持情况取决于 Agent 的 SDK 和请求参数。</span></div>
+        <div class="diagnostics-metrics">
+          <div class="diagnostic-metric"><span>累计请求</span><strong id="diagTotal">—</strong></div>
+          <div class="diagnostic-metric"><span>HTTP 429</span><strong id="diagLimited">—</strong></div>
+          <div class="diagnostic-metric"><span>进行中</span><strong id="diagActive">—</strong></div>
+          <div class="diagnostic-metric"><span>SIWC 最大并发</span><strong id="diagConcurrent">2</strong></div>
         </div>
-        <div class="panel mini-panel"><div class="overline">SERVICE INFO</div><h2>运行信息</h2><div class="fact"><span>API 绑定</span><strong id="bindFact">0.0.0.0（局域网）</strong></div><div class="fact"><span>API 端口</span><strong id="portFact">8087</strong></div><div class="fact"><span>登录账号</span><strong id="accountFact">未登录</strong></div><div class="fact"><span>Token 过期</span><strong id="expiryFact">—</strong></div><div class="fact"><span>上游</span><strong>Responses API</strong></div>
-          <div class="notice"><span>ⓘ</span><p>这是开发预览版。实际 SIWC 资格、模型权限和复杂工具调用还需要实测。</p></div></div>
+        <div class="diagnostics-heading"><h3>最近请求</h3><small id="diagStatus" role="status" aria-live="polite">打开此页面后读取内存记录。</small></div>
+        <div class="diagnostics-table-wrap">
+          <table class="diagnostics-table"><thead><tr><th>时间</th><th>提供器 / 模型</th><th>接口</th><th>请求大小</th><th>耗时</th><th>状态</th></tr></thead>
+          <tbody id="diagnosticRows"><tr><td colspan="6">暂无请求记录</td></tr></tbody></table>
+        </div>
+        <p class="security-hint">数据仅保存在 Provider 进程内，重启后清空，最多保留最近 100 条。请求体字节数不等于 Token 用量；429 可能由同一组织的其他客户端共同触发。SIWC 在服务端拒绝请求前最多自动重试一次，不会因限流自动切换到收费提供器。</p>
       </section>
-
+      </div>
       <footer><div><span class="brandmark tiny">S</span> Local SIWC Provider <span class="footer-sep">/</span> 本地运行 · 不上传凭据</div><button type="button" id="lockBtn" class="footer-action">锁定此控制台</button></footer>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
