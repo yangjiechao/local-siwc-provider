@@ -23,13 +23,15 @@ type Server struct {
 	apiEnabled atomic.Bool
 	dashboard  *Dashboard
 	router     *Router
+	siwcSlots  chan struct{}
+	diagnostics *requestDiagnostics
 }
 
 func newServer(a *Auth) *Server {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.ResponseHeaderTimeout = 45 * time.Second
 	tr.TLSHandshakeTimeout = 10 * time.Second
-	s := &Server{auth: a, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s := &Server{auth: a, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, siwcSlots: make(chan struct{}, siwcMaxConcurrent), diagnostics: &requestDiagnostics{}}
 	s.router = newRouter(a)
 	s.apiEnabled.Store(true) // Preserve the existing 'serve' CLI behavior.
 	return s
@@ -184,28 +186,83 @@ func (s *Server) upstream(ctx context.Context, method, path string, body any) (*
 	if err != nil {
 		return nil, err
 	}
-	var rd io.Reader
+	var data []byte
 	if body != nil {
-		b, err := json.Marshal(body)
+		data, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, resource+path, rd)
-	if err != nil {
-		return nil, err
+
+	// Hold a slot through the entire streamed response, not only until headers.
+	release := func() {}
+	if method == http.MethodPost && path == "/responses" && s.siwcSlots != nil {
+		select {
+		case s.siwcSlots <- struct{}{}:
+			var released atomic.Bool
+			release = func() {
+				if released.CompareAndSwap(false, true) {
+					<-s.siwcSlots
+				}
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "text/event-stream")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+
+	for attempt := 0; attempt < 2; attempt++ {
+		var rd io.Reader
+		if body != nil {
+			rd = bytes.NewReader(data)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, resource+path, rd)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "text/event-stream")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 && path == "/responses" {
+			// A 429 received before any streaming data is safe to retry once.
+			errorBody, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+			_ = resp.Body.Close()
+			wait := siwcRetryDelay(resp.Header, errorBody)
+			if wait <= maxSIWCRetryWait {
+				timer := time.NewTimer(wait)
+				select {
+				case <-timer.C:
+					if span, ok := ctx.Value(diagnosticContextKey{}).(*diagnosticSpan); ok {
+						span.retries++
+					}
+					continue
+				case <-ctx.Done():
+					if !timer.Stop() {
+						select { case <-timer.C: default: }
+					}
+					release()
+					return nil, ctx.Err()
+				}
+			}
+			restoreResponseBody(resp, errorBody)
+		}
+		resp.Body = &releaseBody{ReadCloser: resp.Body, release: release}
+		return resp, nil
 	}
-	return s.client.Do(req)
+	release()
+	return nil, errors.New("SIWC retry exhausted")
 }
 func upstreamFailure(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+	forwardRateLimitHeaders(w.Header(), resp.Header)
 	// Preserve original HTTP status and useful upstream error codes without leaking tokens.
 	var val any
 	if json.Unmarshal(data, &val) == nil {
@@ -266,6 +323,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	forwardRateLimitHeaders(w.Header(), resp.Header)
 	if stream {
 		proxySSE(w, resp.Body)
 		return
@@ -298,6 +356,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	forwardRateLimitHeaders(w.Header(), resp.Header)
 	model, _ := req["model"].(string)
 	stream, _ := req["stream"].(bool)
 	if stream {

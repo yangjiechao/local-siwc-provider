@@ -769,3 +769,79 @@ setInterval(async()=>{
     try {await loadProviders();}catch(_) { /* local dashboard may be exiting */ }
   }
 },15000);
+
+
+/* Page-level navigation: each advanced function has its own tab, no storage required. */
+let activeDashboardTab = 'overview';
+const dashboardTabButtons = Array.from(document.querySelectorAll('[data-tab-target]'));
+function selectDashboardTab(tabName, focus = false) {
+  const target = $('tab-' + tabName);
+  if (!target) return;
+  activeDashboardTab = tabName;
+  for (const button of dashboardTabButtons) {
+    const selected = button.dataset.tabTarget === tabName;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+    button.tabIndex = selected ? 0 : -1;
+    if (selected && focus) button.focus();
+  }
+  for (const panel of document.querySelectorAll('.tab-panel')) {
+    panel.hidden = panel !== target;
+  }
+  if (tabName === 'diagnostics' && unlocked) {
+    loadDiagnostics().catch(error => toast('诊断读取失败：' + error.message));
+  }
+}
+for (const [index, button] of dashboardTabButtons.entries()) {
+  button.addEventListener('click', () => selectDashboardTab(button.dataset.tabTarget));
+  button.addEventListener('keydown', event => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowRight' ? 1 : -1;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? dashboardTabButtons.length - 1 : (index + delta + dashboardTabButtons.length) % dashboardTabButtons.length;
+    selectDashboardTab(dashboardTabButtons[next].dataset.tabTarget, true);
+  });
+}
+for (const button of document.querySelectorAll('[data-open-tab]')) {
+  button.addEventListener('click', () => selectDashboardTab(button.dataset.openTab, true));
+}
+async function loadDiagnostics() {
+  const snapshot = await call('diagnostics');
+  $('diagTotal').textContent = Number(snapshot.total || 0).toLocaleString('zh-CN');
+  $('diagLimited').textContent = Number(snapshot.rate_limited || 0).toLocaleString('zh-CN');
+  $('diagActive').textContent = Number(snapshot.active || 0).toLocaleString('zh-CN');
+  $('diagConcurrent').textContent = snapshot.siwc_concurrency_limit ?? '—';
+  $('diagStatus').textContent = '当前进程内记录 · ' + new Date().toLocaleTimeString('zh-CN');
+  const target = $('diagnosticRows');
+  target.replaceChildren();
+  const records = snapshot.requests || [];
+  if (!records.length) {
+    const row = target.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 6;
+    cell.textContent = '暂无请求记录，运行一次 Agent 推理后可查看。';
+    return;
+  }
+  for (const record of records) {
+    const row = target.insertRow();
+    const values = [
+      new Date(record.started_at).toLocaleTimeString('zh-CN'),
+      record.provider + ' / ' + record.model,
+      record.endpoint,
+      (record.request_bytes / 1024).toFixed(1) + ' KiB',
+      record.duration_ms + ' ms',
+      String(record.status) + (record.retry_count ? ' · 重试' + record.retry_count + '次' : '')
+    ];
+    for (const value of values) row.insertCell().textContent = value;
+    row.cells[5].className = record.status === 429 ? 'diag-http-error' : 'diag-http-ok';
+  }
+}
+$('refreshDiagnosticsBtn').addEventListener('click', () => {
+  if (!unlocked) return;
+  loadDiagnostics().catch(error => toast('诊断读取失败：' + error.message));
+});
+setInterval(() => {
+  if (unlocked && activeDashboardTab === 'diagnostics' && !busy && !document.hidden) {
+    loadDiagnostics().catch(() => {});
+  }
+}, 5000);
