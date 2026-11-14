@@ -24,12 +24,20 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+func testCreateAgentKey(t *testing.T, store *Store) {
+	t.Helper()
+	if err := store.saveLocalKey("test-agent-local-key-123456"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runtimeFixture(t *testing.T) (*Server, *APIRuntime, *Dashboard) {
 	t.Helper()
 	store, err := newStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	testCreateAgentKey(t, store)
 	svc := newServer(newAuth(store))
 	svc.apiEnabled.Store(false)
 	api := newAPIRuntime(svc, freePort(t))
@@ -297,35 +305,46 @@ func TestKeyValidationAndLifecycleRequest(t *testing.T) {
 	}
 }
 
- // macOS regression: a 0.0.0.0 port may bind while 127.0.0.1 is already
- // occupied. The router must reject this and preserve the old listener.
+// macOS 允许通配地址绑定到已被回环地址占用的端口，必须阻止并保留原监听。
 func TestLANBindRejectsSpecificInterfacePort(t *testing.T) {
-    app, runtime, _ := runtimeFixture(t)
-    oldPort := freePort(t)
-    if err := runtime.Configure(oldPort, false); err != nil { t.Fatal(err) }
-    if err := runtime.Start(); err != nil { t.Fatal(err) }
-    before := app.auth.store.get()
-    runtime.mu.Lock()
-    listener, server := runtime.listener, runtime.server
-    runtime.mu.Unlock()
-    block, err := net.Listen("tcp4", "127.0.0.1:0")
-    if err != nil { t.Fatal(err) }
-    defer block.Close()
-    busyPort := block.Addr().(*net.TCPAddr).Port
-    if err := runtime.Configure(busyPort, true); err == nil {
-        t.Fatal("wildcard LAN bind accepted an already occupied loopback port")
-    }
-    runtime.mu.Lock()
-    unchanged := listener == runtime.listener && server == runtime.server
-    runtime.mu.Unlock()
-    if !unchanged || !runtime.Running() { t.Fatal("failed transition replaced original listener") }
-    after := app.auth.store.get()
-    if after.APIPort != before.APIPort || after.LANEnabled != before.LANEnabled {
-        t.Fatal("failed transition modified persisted network configuration")
-    }
-    c := &http.Client{Timeout: time.Second}
-    response, err := c.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", oldPort))
-    if err != nil { t.Fatalf("old API listener not reachable: %v", err) }
-    defer response.Body.Close()
-    if response.StatusCode != http.StatusOK { t.Fatalf("old listener status %d", response.StatusCode) }
+	app, runtime, _ := runtimeFixture(t)
+	oldPort := freePort(t)
+	if err := runtime.Configure(oldPort, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Start(); err != nil {
+		t.Fatal(err)
+	}
+	before := app.auth.store.get()
+	runtime.mu.Lock()
+	listener, server := runtime.listener, runtime.server
+	runtime.mu.Unlock()
+	block, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer block.Close()
+	busyPort := block.Addr().(*net.TCPAddr).Port
+	if err := runtime.Configure(busyPort, true); err == nil {
+		t.Fatal("wildcard LAN bind accepted an already occupied loopback port")
+	}
+	runtime.mu.Lock()
+	unchanged := listener == runtime.listener && server == runtime.server
+	runtime.mu.Unlock()
+	if !unchanged || !runtime.Running() {
+		t.Fatal("failed transition replaced original listener")
+	}
+	after := app.auth.store.get()
+	if after.APIPort != before.APIPort || after.LANEnabled != before.LANEnabled {
+		t.Fatal("failed transition modified persisted network configuration")
+	}
+	c := &http.Client{Timeout: time.Second}
+	response, err := c.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", oldPort))
+	if err != nil {
+		t.Fatalf("old API listener not reachable: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("old listener status %d", response.StatusCode)
+	}
 }

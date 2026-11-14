@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -57,6 +58,11 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/service", d.authorized(d.setService))
 	mux.HandleFunc("GET /ui/api/key", d.authorized(d.key))
 	mux.HandleFunc("POST /ui/api/key", d.authorized(d.setKey))
+	mux.HandleFunc("GET /ui/api/agent-keys", d.authorized(d.listAgentKeys))
+	mux.HandleFunc("POST /ui/api/agent-keys", d.authorized(d.createAgentKey))
+	mux.HandleFunc("POST /ui/api/agent-keys/revoke", d.authorized(d.revokeAgentKey))
+	mux.HandleFunc("POST /ui/api/agent-keys/reveal", d.authorized(d.revealAgentKey))
+	mux.HandleFunc("POST /ui/api/agent-keys/update", d.authorized(d.updateAgentKey))
 	mux.HandleFunc("POST /ui/api/settings", d.authorized(d.setSettings))
 	mux.HandleFunc("POST /ui/api/restart-api", d.authorized(d.restartAPI))
 	mux.HandleFunc("POST /ui/api/restart", d.authorized(d.restartProgram))
@@ -334,7 +340,88 @@ func (d *Dashboard) setService(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Dashboard) key(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]string{"key": d.server.auth.store.get().LocalKey})
+	writeJSON(w, 200, map[string]string{"key": d.server.auth.store.displayAgentKey()})
+}
+
+func (d *Dashboard) listAgentKeys(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Available bool   `json:"available"`
+	}
+	items := []entry{}
+	state := d.server.auth.store.get()
+	if state.LocalKey != "" {
+		items = append(items, entry{"default", "已有 Key", true})
+	}
+	for _, item := range state.AgentKeys {
+		items = append(items, entry{item.ID, item.Name, item.Secret != ""})
+	}
+	writeJSON(w, 200, map[string]any{"keys": items})
+}
+
+func (d *Dashboard) revealAgentKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid key request")
+		return
+	}
+	secret, err := d.server.auth.store.revealAgentKey(body.ID)
+	if err != nil {
+		writeError(w, 400, "key_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"key": secret})
+}
+
+func (d *Dashboard) updateAgentKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID  string `json:"id"`
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid key request")
+		return
+	}
+	if err := d.server.auth.store.updateAgentKey(body.ID, body.Key); err != nil {
+		writeError(w, 400, "key_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (d *Dashboard) createAgentKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+		Key  string `json:"key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid key request")
+		return
+	}
+	item, secret, err := d.server.auth.store.addAgentKey(body.Name, body.Key)
+	if err != nil {
+		writeError(w, 400, "key_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"id": item.ID, "name": item.Name, "key": secret})
+}
+
+func (d *Dashboard) revokeAgentKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "bad_request", "Invalid key request")
+		return
+	}
+	if err := d.server.auth.store.revokeAgentKey(body.ID); err != nil {
+		writeError(w, 400, "key_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 // setKey accepts a user-chosen Agent key but never changes the OAuth or admin key.
@@ -347,17 +434,15 @@ func (d *Dashboard) setKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad_request", "Invalid key request")
 		return
 	}
-	if len(body.Key) < 16 || len(body.Key) > 256 || strings.TrimSpace(body.Key) != body.Key {
-		writeError(w, 400, "bad_key", "API key must be 16-256 characters with no leading or trailing spaces")
+	if !validCustomAgentKey(body.Key) {
+		writeError(w, 400, "bad_key", "API key must be 16-256 printable ASCII characters without spaces")
 		return
 	}
-	for _, char := range body.Key {
-		if char < 33 || char > 126 {
-			writeError(w, 400, "bad_key", "API key must contain printable ASCII characters only")
+	if err := d.server.auth.store.saveLocalKey(body.Key); err != nil {
+		if errors.Is(err, errDuplicateAgentKey) {
+			writeError(w, 400, "duplicate_key", err.Error())
 			return
 		}
-	}
-	if err := d.server.auth.store.saveLocalKey(body.Key); err != nil {
 		writeError(w, 500, "save_failed", "Could not store the new Agent API key")
 		return
 	}

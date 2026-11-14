@@ -28,6 +28,7 @@ func dashboardRequest(t *testing.T, h http.Handler, method, path string, data an
 
 func TestDashboardAuthAndService(t *testing.T) {
     store,err:=newStore(filepath.Join(t.TempDir(),"state.json")); if err!=nil {t.Fatal(err)}
+    testCreateAgentKey(t,store)
     svc:=newServer(newAuth(store));svc.apiEnabled.Store(false);svc.dashboard=newDashboard(svc);h:=svc.Handler()
     for _,p:=range []string{"/ui/","/ui/app.js","/ui/app.css"} {
         if w:=dashboardRequest(t,h,"GET",p,nil,nil,false,"");w.Code!=200 {t.Errorf("%s: %d",p,w.Code)}

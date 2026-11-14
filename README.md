@@ -18,7 +18,7 @@ An **experimental**, single-user, locally administered Go adapter for [Sign in w
 
 - Official SIWC **dynamic open-source client registration** (`dynamic_agent_client` is used only for first registration).
 - OAuth authorization code with PKCE S256, `state`, `nonce`, issued `client_id`, and **ID token RS256/JWKS verification**.
-- Protected local state file (`0600`) with a stable per-host identifier, OAuth credentials, and a randomly generated Agent API key that can be replaced manually through the dashboard.
+- Protected local state file (`0600`) with a stable per-host identifier, OAuth credentials, and user-created Agent API keys managed through the dashboard.
 - Automatic serialized refresh of an expiring OAuth access token (one running process per state file).
 - `GET /v1/models`: translates account-specific SIWC model list to an OpenAI-compatible `data[]` list. The dashboard displays the full returned model IDs, supports filtering, selecting, copying individually, or copying all IDs as newline-separated text.
 - `POST /v1/responses`: forwards supported requests; always enforces upstream `store:false` and `stream:true`. Supports streaming downstream or aggregation for non-stream callers.
@@ -70,7 +70,7 @@ go build -o siwc-provider .
 ./siwc-provider login
 ./siwc-provider status
 
-# Show your locally generated API key ONLY when needed; keep it secret
+# 请先在控制台创建 API Key，需要时才显示，并妥善保管
 ./siwc-provider key
 
 # Start the local API
@@ -142,7 +142,7 @@ The bridge strips `openai-api/` only when forwarding to the configured external 
 ## Security & limitations
 
 - **Single locally selected registration, not an account pool.** No remote proxy, public endpoint, TLS fingerprint spoofing, ChatGPT internal API, or reuse of official CLI tokens.
-- OAuth tokens remain local. The command `key` intentionally reveals *only* the randomly generated **local key**, upon user request. Do not screenshot or publish it.
+- OAuth tokens remain local. The command `key` reveals a locally stored API key upon user request. Do not screenshot or publish it.
 - Redirects are disabled on HTTP clients; OIDC `jwks_uri` and `revocation_endpoint` must resolve to `auth.openai.com` over HTTPS.
 - Returning sign-in reuses the issued `client_id`; the retained ID-token hint is not put in printed URLs. `logout` attempts OIDC refresh-token revocation and preserves the account registration mapping.
 - Agent API routes require a Bearer key and reject requests containing an `Origin` header. API clients must originate on the host or private/local network and use localhost, private IP or the Mac's Bonjour hostname. Browser dashboard routes are **not mounted** on the Agent API listener. The dashboard uses a separate authenticated session and is always bound to loopback. Never forward the Agent API port on a router or expose it to public networks; API requests (including API keys and prompts) are **plaintext HTTP** on LAN, so use only a trusted local network. Cloud hosting/public exposure, browser-based cross-origin clients, or remote Internet proxies are not supported.

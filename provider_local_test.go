@@ -43,6 +43,7 @@ func TestLocalModelCatalogAndInferenceWithNoAPIKey(t *testing.T) {
  }))
  defer upstream.Close()
  store,err:=newStore(filepath.Join(t.TempDir(),"state.json"));if err!=nil{t.Fatal(err)}
+ testCreateAgentKey(t,store)
  p:=ExternalProvider{ID:"ollama",Name:"Ollama",Kind:"local-openai-compatible",BaseURL:upstream.URL+"/v1",Enabled:true}
  if err:=store.upsertProvider(p);err!=nil{t.Fatal(err)}
  app:=newServer(newAuth(store));app.router.Refresh(context.Background())

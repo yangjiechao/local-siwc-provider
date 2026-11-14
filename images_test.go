@@ -19,6 +19,7 @@ func newImageTestServer(t *testing.T, roundTrip mockRoundTrip) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testCreateAgentKey(t, store)
 	if err := store.upsertProvider(ExternalProvider{
 		ID: "openai-api", Name: "Paid OpenAI", Kind: "openai-compatible",
 		BaseURL: "https://api.example.org/v1", APIKey: "paid-upstream-only", Enabled: true,

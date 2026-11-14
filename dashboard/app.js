@@ -4,7 +4,6 @@ const $ = (id) => document.getElementById(id);
 let unlocked = false;
 let status = null;
 let keyCache = null;
-let keyShown = false;
 let modelList = [];
 let configuredProviders = [];
 // The DOM is refreshed from server data; open panels are a UI preference,
@@ -28,7 +27,8 @@ function toast(message) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.hidden = true, 3500);
 }
 function lock() {
-  unlocked = false; status = null; keyCache = null; keyShown = false;
+  unlocked = false; status = null; keyCache = null;
+  $('agentKeyRows').replaceChildren();
   $('content').hidden = true; $('lockScreen').hidden = false;
 }
 async function call(path, {method='GET', body}={}) {
@@ -55,6 +55,7 @@ async function unlock() {
   try {
     unlocked = true;
     await fetchStatus();
+    await loadAgentKeys();
     await loadProviderPresets();
     await loadProviders();
     $('lockScreen').hidden = true;
@@ -132,31 +133,65 @@ $('toggleServiceBtn').addEventListener('click', () => perform('切换服务', as
 }));
 async function loadKey() {
   if (keyCache === null) keyCache = (await call('key')).key;
+  if (!keyCache) throw Error('请先创建 Key，或补全已有 Key');
   return keyCache;
 }
-$('revealKeyBtn').addEventListener('click', () => perform('读取 Key', async () => {
-  keyShown = !keyShown;
-  $('keyValue').textContent = keyShown ? await loadKey() : '•••• •••• •••• ••••';
-  $('revealKeyBtn').setAttribute('aria-label',keyShown?'隐藏本地 Key':'显示本地 Key');
-}));
 async function copyText(content) {
   if (!content) { toast('暂无可复制的内容'); return; }
   await navigator.clipboard.writeText(content);
   toast('已复制到剪贴板');
 }
-$('copyKeyBtn').addEventListener('click', () => perform('复制 Key', async () => {await copyText(await loadKey());}));
-$('saveKeyBtn').addEventListener('click', () => perform('保存 Key', async () => {
-  const secret = $('customKey').value;
-  if (secret.length < 16 || secret.length > 256 || /[^\x21-\x7E]/.test(secret)) {
-    throw Error('请填写 16–256 个不含空格的英文可打印字符');
+async function loadAgentKeys() {
+  const data = await call('agent-keys');
+  const list = $('agentKeyRows'); list.replaceChildren();
+  if (!data.keys.length) { list.textContent = '暂无 Key，请在下方添加。'; return; }
+  for (const item of data.keys) {
+    const row = document.createElement('div'); row.className = 'agent-key-row';
+    const info = document.createElement('div');
+    const name = document.createElement('strong'); name.textContent = item.name;
+    const value = document.createElement('code'); value.className = 'agent-key-value'; value.textContent = item.available ? '•••• •••• •••• ••••' : '原值未保存，请点更换并填写原 Key';
+    info.append(name,value);
+    const button = label => { const el = document.createElement('button'); el.type='button'; el.className='btn outline'; el.textContent=label; return el; };
+    const reveal = async () => (await call('agent-keys/reveal', {method:'POST',body:{id:item.id}})).key;
+    const show = button('显示'); let shown = false;
+    show.addEventListener('click', () => perform('显示 Key', async () => {
+      if (!item.available) throw Error('原值未保存，请点更换并填写原 Key');
+      shown = !shown; value.textContent = shown ? await reveal() : '•••• •••• •••• ••••'; show.textContent = shown ? '隐藏' : '显示';
+    }));
+    const copy = button('复制'); copy.addEventListener('click', () => perform('复制 Key', async () => copyText(await reveal())));
+    const edit = document.createElement('details'); edit.className='agent-key-edit';
+    const summary = document.createElement('summary'); summary.textContent='更换';
+    const input = document.createElement('input'); input.className='text-field'; input.type='password'; input.autocomplete='new-password'; input.maxLength=256; input.placeholder='填写 16–256 个不含空格的 ASCII 字符';
+    const save = button('保存');
+    save.addEventListener('click', () => perform('更换 Key', async () => {
+      const secret = input.value;
+      if (secret.length < 16 || secret.length > 256 || /[^\x21-\x7E]/.test(secret)) throw Error('请填写 16–256 个不含空格的英文可打印字符');
+      if (!confirm(`保存“${item.name}”的 Key？若内容改变，原 Key 将立即失效。`)) return;
+      await call('agent-keys/update',{method:'POST',body:{id:item.id,key:secret}}); keyCache=null; input.value=''; await loadAgentKeys(); toast('Key 已保存');
+    }));
+    edit.append(summary,input,save);
+    const revoke = button('删除');
+    revoke.addEventListener('click', () => {
+      if (!confirm(`确定删除“${item.name}”的 Key？使用该 Key 的应用将立即无法访问。`)) return;
+      perform('删除 Key', async () => {
+        await call('agent-keys/revoke', {method:'POST', body:{id:item.id}});
+        keyCache=null; await loadAgentKeys(); toast('Key 已删除');
+      });
+    });
+    row.append(info,show,copy,edit,revoke); list.append(row);
   }
-  if (!confirm('确定更换 Agent API Key？旧 Key 将立即失效，已有 Agent 需要修改配置。')) return;
-  await call('key',{method:'POST',body:{key:secret}});
-  keyCache = null; keyShown = false;
-  $('keyValue').textContent = '•••• •••• •••• ••••';
-  $('customKey').value = '';
-  toast('已保存新 Key。请更新所有 Agent 的 API Key 配置');
-}));
+}
+$('agentKeyForm').addEventListener('submit', event => {
+  event.preventDefault();
+  perform('生成 Key', async () => {
+    const secret = $('agentKeyCustom').value;
+    if (secret && (secret.length < 16 || secret.length > 256 || /[^\x21-\x7E]/.test(secret))) throw Error('自定义 Key 须为 16–256 个不含空格的英文可打印字符');
+    await call('agent-keys', {method:'POST', body:{name:$('agentKeyName').value.trim(), key:secret}});
+    keyCache=null;
+    $('agentKeyName').value = ''; $('agentKeyCustom').value = ''; await loadAgentKeys();
+    toast('Key 已添加，可以在列表中显示或复制');
+  });
+});
 function renderModelRows() {
   const list = $('modelRows');
   list.replaceChildren();

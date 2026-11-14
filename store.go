@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -36,9 +38,17 @@ type State struct {
 	APIEnabled bool               `json:"api_enabled"`
 	Credential *Credential        `json:"credential,omitempty"`
 	Providers  []ExternalProvider `json:"providers,omitempty"`
+	AgentKeys  []AgentKey         `json:"agent_keys,omitempty"`
 	// Each missing entry is enabled by default. Keys are "siwc" or provider ID.
 	// Disabled IDs survive catalog refreshes and application restarts.
 	DisabledModels map[string][]string `json:"disabled_models,omitempty"`
+}
+
+type AgentKey struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Hash   string `json:"hash"`
+	Secret string `json:"secret,omitempty"`
 }
 
 type Store struct {
@@ -101,13 +111,16 @@ func newStore(path string) (*Store, error) {
 		if e = json.Unmarshal(b, &s.state); e != nil {
 			return nil, fmt.Errorf("invalid state file: %w", e)
 		}
-		if s.state.HostID == "" || s.state.LocalKey == "" {
-			return nil, errors.New("state missing host ID or local key")
+		if s.state.HostID == "" {
+			return nil, errors.New("state missing host ID")
 		}
 		// Migrate existing installations without changing the local API key or OAuth credentials.
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(b, &fields); err != nil {
 			return nil, err
+		}
+		if _, ok := fields["local_key"]; !ok {
+			return nil, errors.New("state missing local key field")
 		}
 		changed := false
 		if _, ok := fields["api_port"]; !ok {
@@ -142,15 +155,11 @@ func newStore(path string) (*Store, error) {
 		if e != nil {
 			return nil, e
 		}
-		y, e := randomString(32)
-		if e != nil {
-			return nil, e
-		}
 		adminKey, e := randomString(32)
 		if e != nil {
 			return nil, e
 		}
-		s.state = State{HostID: x, LocalKey: y, AdminKey: adminKey, APIPort: defaultAPIPort, LANEnabled: true}
+		s.state = State{HostID: x, AdminKey: adminKey, APIPort: defaultAPIPort, LANEnabled: true}
 		if e = s.saveLocked(); e != nil {
 			return nil, e
 		}
@@ -193,6 +202,7 @@ func (s *Store) get() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := s.state
+	v.AgentKeys = append([]AgentKey(nil), v.AgentKeys...)
 	if v.Credential != nil {
 		c := *v.Credential
 		v.Credential = &c
@@ -211,6 +221,186 @@ func (s *Store) get() State {
 		v.DisabledModels = copied
 	}
 	return v
+}
+
+func (s *Store) validAgentKeyLocked(key string) bool {
+	if key == "" {
+		return false
+	}
+	if s.state.LocalKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.state.LocalKey)) == 1 {
+		return true
+	}
+	hash := sha256.Sum256([]byte(key))
+	encoded := hex.EncodeToString(hash[:])
+	for _, item := range s.state.AgentKeys {
+		if subtle.ConstantTimeCompare([]byte(encoded), []byte(item.Hash)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) validAgentKey(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validAgentKeyLocked(key)
+}
+
+var errDuplicateAgentKey = errors.New("该 Key 已存在，请使用不同的 Key")
+
+func validCustomAgentKey(key string) bool {
+	if len(key) < 16 || len(key) > 256 {
+		return false
+	}
+	for _, c := range key {
+		if c < 33 || c > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) addAgentKey(name, secret string) (AgentKey, string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 80 {
+		return AgentKey{}, "", errors.New("名称须为 1 至 80 字节")
+	}
+	id, err := randomString(12)
+	if err != nil {
+		return AgentKey{}, "", err
+	}
+	if secret == "" {
+		secret, err = randomString(32)
+		if err != nil {
+			return AgentKey{}, "", err
+		}
+		secret = "sk-local-" + secret
+	} else if !validCustomAgentKey(secret) {
+		return AgentKey{}, "", errors.New("Key 须为 16 至 256 个不含空格的 ASCII 可打印字符")
+	}
+	hash := sha256.Sum256([]byte(secret))
+	item := AgentKey{ID: id, Name: name, Hash: hex.EncodeToString(hash[:]), Secret: secret}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.state.AgentKeys) >= 64 {
+		return AgentKey{}, "", errors.New("最多添加 64 个应用 Key")
+	}
+	if s.validAgentKeyLocked(secret) {
+		return AgentKey{}, "", errDuplicateAgentKey
+	}
+	before := s.state.AgentKeys
+	s.state.AgentKeys = append(append([]AgentKey(nil), before...), item)
+	if err := s.saveLocked(); err != nil {
+		s.state.AgentKeys = before
+		return AgentKey{}, "", err
+	}
+	return item, secret, nil
+}
+
+func (s *Store) revokeAgentKey(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "default" {
+		if s.state.LocalKey == "" {
+			return errors.New("未找到 Key")
+		}
+		before := s.state.LocalKey
+		s.state.LocalKey = ""
+		if err := s.saveLocked(); err != nil {
+			s.state.LocalKey = before
+			return err
+		}
+		return nil
+	}
+	before := s.state.AgentKeys
+	next := make([]AgentKey, 0, len(before))
+	for _, item := range before {
+		if item.ID != id {
+			next = append(next, item)
+		}
+	}
+	if len(next) == len(before) {
+		return errors.New("未找到应用 Key")
+	}
+	s.state.AgentKeys = next
+	if err := s.saveLocked(); err != nil {
+		s.state.AgentKeys = before
+		return err
+	}
+	return nil
+}
+
+func (s *Store) revealAgentKey(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "default" && s.state.LocalKey != "" {
+		return s.state.LocalKey, nil
+	}
+	for _, item := range s.state.AgentKeys {
+		if item.ID == id {
+			if item.Secret == "" {
+				return "", errors.New("此 Key 的原文未保存，请更换或重新填写原 Key")
+			}
+			return item.Secret, nil
+		}
+	}
+	return "", errors.New("未找到 Key")
+}
+
+func (s *Store) updateAgentKey(id, secret string) error {
+	if !validCustomAgentKey(secret) {
+		return errors.New("Key 须为 16 至 256 个不含空格的 ASCII 可打印字符")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "default" {
+		if s.state.LocalKey == "" {
+			return errors.New("未找到 Key")
+		}
+		if secret != s.state.LocalKey && s.validAgentKeyLocked(secret) {
+			return errDuplicateAgentKey
+		}
+		before := s.state.LocalKey
+		s.state.LocalKey = secret
+		if err := s.saveLocked(); err != nil {
+			s.state.LocalKey = before
+			return err
+		}
+		return nil
+	}
+	hash := sha256.Sum256([]byte(secret))
+	encoded := hex.EncodeToString(hash[:])
+	for i, item := range s.state.AgentKeys {
+		if item.ID != id {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(encoded), []byte(item.Hash)) != 1 && s.validAgentKeyLocked(secret) {
+			return errDuplicateAgentKey
+		}
+		before := s.state.AgentKeys[i]
+		s.state.AgentKeys[i].Hash = encoded
+		s.state.AgentKeys[i].Secret = secret
+		if err := s.saveLocked(); err != nil {
+			s.state.AgentKeys[i] = before
+			return err
+		}
+		return nil
+	}
+	return errors.New("未找到 Key")
+}
+
+func (s *Store) displayAgentKey() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.LocalKey != "" {
+		return s.state.LocalKey
+	}
+	for _, item := range s.state.AgentKeys {
+		if item.Secret != "" {
+			return item.Secret
+		}
+	}
+	return ""
 }
 
 // upsertProvider saves an independent provider without changing SIWC credentials.
@@ -311,19 +501,34 @@ func (s *Store) setModelEnabled(provider, model string, enabled bool) error {
 	if provider != "siwc" {
 		found := false
 		for _, p := range s.state.Providers {
-			if p.ID == provider { found = true; break }
+			if p.ID == provider {
+				found = true
+				break
+			}
 		}
-		if !found { return errors.New("provider does not exist") }
+		if !found {
+			return errors.New("provider does not exist")
+		}
 	}
 	old := s.state.DisabledModels
 	next := make(map[string][]string, len(old))
-	for k, models := range old { next[k] = append([]string(nil), models...) }
+	for k, models := range old {
+		next[k] = append([]string(nil), models...)
+	}
 	remaining := make([]string, 0, len(next[provider])+1)
 	for _, m := range next[provider] {
-		if m != model { remaining = append(remaining, m) }
+		if m != model {
+			remaining = append(remaining, m)
+		}
 	}
-	if !enabled { remaining = append(remaining, model) }
-	if len(remaining) == 0 { delete(next, provider) } else { next[provider] = remaining }
+	if !enabled {
+		remaining = append(remaining, model)
+	}
+	if len(remaining) == 0 {
+		delete(next, provider)
+	} else {
+		next[provider] = remaining
+	}
 	s.state.DisabledModels = next
 	if err := s.saveLocked(); err != nil {
 		s.state.DisabledModels = old
@@ -343,7 +548,9 @@ func (s *Store) deleteProvider(id string) error {
 			if oldDisabled != nil {
 				next := make(map[string][]string, len(oldDisabled))
 				for k, val := range oldDisabled {
-					if k != id { next[k] = append([]string(nil), val...) }
+					if k != id {
+						next[k] = append([]string(nil), val...)
+					}
 				}
 				s.state.DisabledModels = next
 			}
@@ -375,6 +582,9 @@ func (s *Store) saveCredential(c *Credential) error {
 func (s *Store) saveLocalKey(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if key != s.state.LocalKey && s.validAgentKeyLocked(key) {
+		return errDuplicateAgentKey
+	}
 	prev := s.state.LocalKey
 	s.state.LocalKey = key
 	if err := s.saveLocked(); err != nil {

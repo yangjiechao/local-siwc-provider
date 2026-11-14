@@ -141,6 +141,7 @@ func TestExternalInferenceKeyAndModelRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testCreateAgentKey(t, s)
 	if err := s.upsertProvider(ExternalProvider{ID: "deepseek", Name: "DeepSeek", Kind: "openai-compatible", BaseURL: "https://api.deepseek.com", APIKey: "deepseek-only", Enabled: true, ManualModels: []string{"deepseek-flash"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +191,7 @@ func TestArkVideoTaskRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testCreateAgentKey(t, s)
 	if err := s.upsertProvider(ExternalProvider{ID: "ark", Name: "Ark Video", Kind: "ark-video", BaseURL: "https://ark.cn-beijing.volces.com/api/v3", APIKey: "ark-key", Enabled: true, ManualModels: []string{"seedance-test"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +235,7 @@ func TestNoAutoFallbackOnInvalidSIWC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testCreateAgentKey(t, s)
 	if err := s.upsertProvider(ExternalProvider{ID: "paid", Name: "Paid", Kind: "openai-compatible", BaseURL: "https://provider.example.com", APIKey: "paid-key", Enabled: true, ManualModels: []string{"model-si"}}); err != nil {
 		t.Fatal(err)
 	}

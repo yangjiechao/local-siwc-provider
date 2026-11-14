@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,7 +73,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		if r.URL.Path != "/healthz" {
 			bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.auth.store.get().LocalKey)) != 1 {
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || !s.auth.store.validAgentKey(bearer) {
 				writeError(w, 401, "authentication_error", "Invalid local bearer key")
 				return
 			}
@@ -116,7 +115,7 @@ func (s *Server) APIHandler() http.Handler {
 		}
 		if r.URL.Path != "/healthz" {
 			value := r.Header.Get("Authorization")
-			if !strings.HasPrefix(value, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(value, "Bearer ")), []byte(s.auth.store.get().LocalKey)) != 1 {
+			if !strings.HasPrefix(value, "Bearer ") || !s.auth.store.validAgentKey(strings.TrimPrefix(value, "Bearer ")) {
 				writeError(w, 401, "authentication_error", "Invalid Agent API key")
 				return
 			}

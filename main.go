@@ -134,8 +134,12 @@ func run() error {
 			fmt.Printf("Signed in: yes\nAccount: %s\nClient: %s\nAccess token expires: %s\n", s.Credential.Email, s.Credential.ClientID, s.Credential.ExpiresAt.Format(time.RFC3339))
 		}
 	case "key":
+		key := store.displayAgentKey()
+		if key == "" {
+			return errors.New("没有可显示的 API Key，请在控制台创建或补充 Key")
+		}
 		fmt.Println("Agent API key, keep it private:")
-		fmt.Println(store.get().LocalKey)
+		fmt.Println(key)
 	case "logout":
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

@@ -49,13 +49,8 @@
           <span class="subline">Agent 地址：<code id="serviceAddress">127.0.0.1:8087</code></span>
         </section>
 
-        <section class="panel" aria-labelledby="keyTitle"><div class="panel-top"><span class="step-num">03</span><span class="panel-symbol">⌁</span></div><h3 id="keyTitle">获取本地 API Key</h3><p class="desc">这不是 ChatGPT Token，只用于你的 Agent 访问本地 Provider。</p>
-          <div class="key-box"><span id="keyValue">•••• •••• •••• ••••</span><button id="revealKeyBtn" type="button" class="icon-btn" title="显示或隐藏本地 Key" aria-label="显示或隐藏本地 Key">◉</button></div>
-          <button type="button" id="copyKeyBtn" class="btn outline">复制本地 Key <span>⧉</span></button>
-          <label class="small-label" for="customKey">自定义 API Key（16–256 个 ASCII 字符）</label>
-          <input class="text-field" id="customKey" type="password" autocomplete="new-password" minlength="16" maxlength="256" spellcheck="false" placeholder="输入你希望 Agent 使用的 Key">
-          <button type="button" id="saveKeyBtn" class="btn outline secondary-btn">保存自定义 Key</button>
-          <span class="subline">保存后旧 Key 立即失效，请同步修改 Agent 的配置。切勿使用其他网站密码。</span>
+        <section class="panel" aria-labelledby="keyTitle"><div class="panel-top"><span class="step-num">03</span><span class="panel-symbol">⌁</span></div><h3 id="keyTitle">管理本地 API Key</h3><p class="desc">创建和管理应用调用所需的 Key。</p>
+          <a class="btn outline" href="#agentKeysTitle">管理 API Key ↓</a>
         </section>
 
         <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
@@ -64,6 +59,16 @@
           <span class="subline">会直接请求 OpenAI 的模型目录，具体模型 ID 在下方完整列出。</span>
         </section>
       </div>
+
+      <section class="panel provider-panel" aria-labelledby="agentKeysTitle">
+        <div class="section-header"><div><div class="overline">API KEYS</div><h2 id="agentKeysTitle">本地 API Key</h2><p class="subheading">所有 Key 访问同一个 API；可为不同应用创建和撤销独立 Key。</p></div></div>
+        <div id="agentKeyList" class="provider-list" aria-live="polite"><div id="agentKeyRows"></div></div>
+        <form id="agentKeyForm" class="agent-key-form" autocomplete="off">
+          <label for="agentKeyName">应用名称</label><input id="agentKeyName" class="text-field" maxlength="80" required placeholder="例如：生图工作台">
+          <label for="agentKeyCustom">自定义 Key（选填）</label><input id="agentKeyCustom" class="text-field" type="password" autocomplete="new-password" minlength="16" maxlength="256" spellcheck="false" placeholder="留空自动生成；填写 16–256 个不含空格的 ASCII 字符">
+          <button class="btn dark" type="submit">添加 Key</button>
+        </form>
+      </section>
 
       <section class="panel provider-panel" aria-labelledby="providerTitle">
         <div class="section-header"><div><div class="overline">MODEL PROVIDERS · INDEPENDENT BILLING</div><h2 id="providerTitle">额外模型商管理</h2><p class="subheading">先选云厂商或本地推理服务，再配置模型。自动填写官方 API 地址，只有自定义服务需要输入 URL；厂商 Logo、模型独立勾选与模型目录一起显示。</p></div><span class="tag">单应用使用 · 凭据不共享</span></div>
