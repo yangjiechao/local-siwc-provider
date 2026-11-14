@@ -182,3 +182,31 @@ body{background:linear-gradient(180deg,#f1f5fa 0%,#f5f7fb 450px,#f6f8fb 100%);co
 .provider-model-details>.model-toggle-grid{margin-top:10px}
 .provider-model-details[open] summary{color:#2f5f94}
 @media(max-width:680px){.model-toggle-grid{grid-template-columns:1fr}.siwc-model-panel{padding:14px}}
+
+
+/* Tabbed console: preserve a compact overview and move advanced controls to focused pages. */
+.dashboard-tabs{display:flex;flex-wrap:wrap;gap:8px;padding:20px 0 12px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.dashboard-tab{appearance:none;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--muted);font:inherit;font-weight:650;padding:11px 18px;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
+.dashboard-tab:hover{background:rgba(68,113,164,.09);color:var(--text)}
+.dashboard-tab.is-active{color:var(--text);background:rgba(76,127,185,.13);border-color:rgba(91,143,202,.35)}
+.dashboard-tab:focus-visible{outline:3px solid #6794d2;outline-offset:2px}
+.tab-panel[hidden]{display:none!important}
+.tab-panel>.panel:first-child{margin-top:0}
+.diagnostics-panel{padding:28px}
+.diagnostics-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:22px 0 28px}
+.diagnostic-metric{border:1px solid var(--line);border-radius:14px;padding:18px;background:rgba(89,138,195,.06);display:flex;flex-direction:column;gap:8px}
+.diagnostic-metric span{color:var(--muted);font-size:13px}
+.diagnostic-metric strong{font-size:27px;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.diagnostics-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}
+.diagnostics-heading h3{margin:0;font-size:17px}
+.diagnostics-heading small{color:var(--muted)}
+.diagnostics-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px}
+.diagnostics-table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}
+.diagnostics-table th,.diagnostics-table td{padding:12px 14px;white-space:nowrap;border-bottom:1px solid var(--line)}
+.diagnostics-table th{color:var(--muted);font-weight:650;background:rgba(89,138,195,.07)}
+.diagnostics-table tbody tr:last-child td{border-bottom:0}
+.diagnostics-table td:nth-child(2){max-width:310px;overflow:hidden;text-overflow:ellipsis}
+.diag-http-error{color:#d96555;font-weight:700}
+.diag-http-ok{font-weight:700}
+@media(max-width:800px){.diagnostics-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-tab{flex:1 1 auto}.diagnostics-panel{padding:19px}}
+@media(max-width:480px){.dashboard-tab{padding:9px 11px;font-size:13px}.diagnostic-metric{padding:12px}.diagnostic-metric strong{font-size:22px}}
