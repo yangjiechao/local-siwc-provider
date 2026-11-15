@@ -61,10 +61,10 @@
           <button class="btn outline" type="button" data-open-tab="keys">管理 API Key →</button>
         </section>
 
-        <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">只显示当前授权账号真实返回的模型，不预设任何模型权限。</p>
+        <section class="panel" aria-labelledby="modelsTitle"><div class="panel-top"><span class="step-num">04</span><span class="panel-symbol">▦</span></div><h3 id="modelsTitle">查询可用模型</h3><p class="desc">查询已启用的模型来源，并显示可用的模型 ID。</p>
           <div class="info-box"><div class="info-label">模型目录</div><strong id="modelCount">尚未查询</strong><small id="modelDetail">登录后点击刷新。</small></div>
           <button type="button" id="refreshModelsBtn" class="btn outline" disabled>刷新模型列表 <span>↻</span></button>
-          <span class="subline">会直接请求 OpenAI 的模型目录，具体模型 ID 在下方完整列出。</span>
+          <button type="button" class="btn outline secondary-btn" data-open-tab="models" data-scroll-target="modelDirectoryTitle">查看模型列表 →</button>
         </section>
       </div>
 
@@ -141,7 +141,7 @@
             <button id="copyAllModelsBtn" type="button" class="btn outline" disabled>复制全部模型 ID ⧉</button>
           </div>
         </div>
-        <p id="modelListHint" class="model-list-hint" role="status" aria-live="polite">点击上方“刷新模型列表”后，这里将显示全部可用模型。</p>
+        <p id="modelListHint" class="model-list-hint" role="status" aria-live="polite">刷新模型列表后，这里将显示可用模型。</p>
         <ul id="modelRows" class="model-list" aria-label="可用模型 ID 列表"></ul>
       </section>
 

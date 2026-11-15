@@ -199,7 +199,7 @@ function renderModelRows() {
   const filtered = modelList.filter(id => id.toLocaleLowerCase().includes(query));
   const hint = $('modelListHint');
   if (!modelsLoaded) {
-    hint.textContent = '点击上方“刷新模型列表”后，这里将显示全部可用模型。';
+    hint.textContent = '刷新模型列表后，这里将显示可用模型。';
     return;
   }
   if (!modelList.length) {
@@ -246,7 +246,7 @@ function renderModelRows() {
 }
 function updateModels() {
   $('modelCount').textContent = !modelsLoaded ? '尚未查询' : modelList.length ? `${modelList.length} 个可用模型` : '未找到可用模型';
-  $('modelDetail').textContent = !modelsLoaded ? '登录或配置模型商后点击刷新。' : modelList.length ? '完整模型 ID 已在下方列出。' : '请确认 SIWC 账号或额外模型商的模型权限。';
+  $('modelDetail').textContent = !modelsLoaded ? '登录或配置模型商后点击刷新。' : modelList.length ? '可在模型列表中查看完整 ID。' : '请确认 SIWC 账号或额外模型商的模型权限。';
   const sel = $('modelSelect'), chosen = sel.value;
   sel.replaceChildren();
   if (modelList.length === 0) sel.add(new Option('请先查询模型目录',''));
@@ -803,7 +803,10 @@ for (const [index, button] of dashboardTabButtons.entries()) {
   });
 }
 for (const button of document.querySelectorAll('[data-open-tab]')) {
-  button.addEventListener('click', () => selectDashboardTab(button.dataset.openTab, true));
+  button.addEventListener('click', () => {
+    selectDashboardTab(button.dataset.openTab, true);
+    if (button.dataset.scrollTarget) document.getElementById(button.dataset.scrollTarget)?.scrollIntoView({ block: 'start' });
+  });
 }
 async function loadDiagnostics() {
   const snapshot = await call('diagnostics');
