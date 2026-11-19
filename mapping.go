@@ -273,7 +273,9 @@ func responseToCompletion(resp jsonMap, model string) jsonMap {
 	}
 	result := jsonMap{"id": id, "object": "chat.completion", "created": created, "model": model, "choices": []any{jsonMap{"index": 0, "message": msg, "finish_reason": finish}}}
 	if usage, ok := resp["usage"].(map[string]any); ok {
-		result["usage"] = jsonMap{"prompt_tokens": usage["input_tokens"], "completion_tokens": usage["output_tokens"], "total_tokens": usage["total_tokens"]}
+		mapped := jsonMap{"prompt_tokens": usage["input_tokens"], "completion_tokens": usage["output_tokens"], "total_tokens": usage["total_tokens"]}
+		if details, ok := usage["input_tokens_details"].(map[string]any); ok { mapped["prompt_tokens_details"] = details }
+		result["usage"] = mapped
 	}
 	return result
 }

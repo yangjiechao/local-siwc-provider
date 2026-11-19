@@ -25,6 +25,7 @@ type Server struct {
 	router     *Router
 	siwcSlots  chan struct{}
 	diagnostics *requestDiagnostics
+	usage *usageStore
 }
 
 func newServer(a *Auth) *Server {
@@ -33,6 +34,7 @@ func newServer(a *Auth) *Server {
 	tr.TLSHandshakeTimeout = 10 * time.Second
 	s := &Server{auth: a, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, siwcSlots: make(chan struct{}, siwcMaxConcurrent), diagnostics: &requestDiagnostics{}}
 	s.router = newRouter(a)
+	s.usage = newUsageStore(a.store)
 	s.apiEnabled.Store(true) // Preserve the existing 'serve' CLI behavior.
 	return s
 }
@@ -549,7 +551,9 @@ func chatSSE(w http.ResponseWriter, body io.Reader, model string) {
 			var usage any
 			if resp, ok := data["response"].(map[string]any); ok {
 				if u, ok := resp["usage"].(map[string]any); ok {
-					usage = jsonMap{"prompt_tokens": u["input_tokens"], "completion_tokens": u["output_tokens"], "total_tokens": u["total_tokens"]}
+					mapped := jsonMap{"prompt_tokens": u["input_tokens"], "completion_tokens": u["output_tokens"], "total_tokens": u["total_tokens"]}
+					if details, ok := u["input_tokens_details"].(map[string]any); ok { mapped["prompt_tokens_details"] = details }
+					usage = mapped
 				}
 				if out, ok := resp["output"].([]any); ok {
 					for _, raw := range out {

@@ -29,9 +29,40 @@
         <button id="nav-overview" type="button" role="tab" class="dashboard-tab is-active" aria-controls="tab-overview" aria-selected="true" tabindex="0" data-tab-target="overview">概览</button>
         <button id="nav-models" type="button" role="tab" class="dashboard-tab" aria-controls="tab-models" aria-selected="false" tabindex="-1" data-tab-target="models">模型与路由</button>
         <button id="nav-keys" type="button" role="tab" class="dashboard-tab" aria-controls="tab-keys" aria-selected="false" tabindex="-1" data-tab-target="keys">API Key</button>
+        <button id="nav-usage" type="button" role="tab" class="dashboard-tab" aria-controls="tab-usage" aria-selected="false" tabindex="-1" data-tab-target="usage">用量统计</button>
         <button id="nav-settings" type="button" role="tab" class="dashboard-tab" aria-controls="tab-settings" aria-selected="false" tabindex="-1" data-tab-target="settings">运行设置</button>
         <button id="nav-diagnostics" type="button" role="tab" class="dashboard-tab" aria-controls="tab-diagnostics" aria-selected="false" tabindex="-1" data-tab-target="diagnostics">请求诊断</button>
       </nav>
+      <div id="tab-usage" class="tab-panel" role="tabpanel" aria-labelledby="nav-usage" hidden>
+        <section class="panel usage-panel"><h2>用量统计</h2><p id="usageCoverage">仅统计启用后通过本提供器的推理请求。上游未返回用量时标记为未知。</p><p>部分兼容接口的流式请求需要客户端设置 stream_options.include_usage 才会返回 Token 用量；具体取决于模型商。异步视频用量在客户端通过本提供器查询到完成结果后更新；尚未查到时为未知。</p><div class="usage-controls">
+          <label>时间范围 <select id="usageRange"><option value="24">24 小时</option><option value="7">7 天</option><option value="30">30 天</option></select></label>
+          <label>应用 Key <select id="usageKey"><option value="">全部</option></select></label>
+          <label>模型 <select id="usageModel"><option value="">全部</option></select></label>
+          <label>图表 <select id="usageMetric"><option value="tokens">Token</option></select></label>
+          <button type="button" id="usageRefresh" class="btn outline">刷新</button></div>
+          <p id="usageSummary" aria-live="polite"></p>
+          <div class="usage-chart-card">
+            <div class="usage-chart-header"><div><h3 id="usageChartTitle">Token 用量</h3><p id="usageChartUnit"></p></div><span id="usageChartInterval"></span></div>
+            <div class="usage-chart-wrap" id="usageChartWrap">
+              <svg id="usageChart" viewBox="0 0 720 280" role="group" aria-label="用量趋势，悬停或点击时段查看详情"></svg>
+              <div id="usageChartPopup" class="usage-chart-popup" role="group" aria-label="所选时段详情" hidden><button type="button" id="usageChartClose" class="usage-chart-close" aria-label="关闭时段详情">×</button><div id="usageChartDetails" aria-live="polite"></div></div>
+            </div>
+            <div class="usage-chart-footer"><div class="usage-chart-legend" aria-label="图例"><span><i class="usage-legend-line"></i>完整数据</span><span><i class="usage-legend-partial"></i>部分数据</span><span><i class="usage-legend-unknown"></i>未覆盖 / 未知</span></div><span id="usageChartTimezone"></span></div>
+            <div class="usage-chart-range"><span id="usageChartStart"></span><span aria-hidden="true">—</span><span id="usageChartEnd"></span></div>
+          </div>
+          <p class="usage-chart-hint">悬停查看时段，点击固定详情；可用左右方向键切换。下方时间表从最近的时段开始，“—”表示没有覆盖或没有已知数据。</p>
+          <div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>时间</th><th>覆盖</th><th>请求</th><th>已知输入 Token</th><th>已知输出 Token</th><th>未知用量</th><th>失败或中断</th><th>金额</th></tr></thead><tbody id="usageRows"></tbody></table></div>
+          <h3>按应用 Key 汇总</h3><div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>应用 Key</th><th>请求</th><th>已知输入</th><th>已知输出</th><th>未知用量</th><th>金额</th></tr></thead><tbody id="usageKeyRows"></tbody></table></div>
+          <h3>按模型汇总</h3><div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>模型</th><th>请求</th><th>已知输入</th><th>已知输出</th><th>未知用量</th><th>金额</th></tr></thead><tbody id="usageModelRows"></tbody></table></div>
+          <h3>模型估算单价</h3><p>已核实的 OpenAI 模型按<a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">官方 API 标准文本价</a>换算，订阅用量也显示参考值，不代表实际账单。上游提供缓存读取和写入明细时按官方价计算；旧记录缺少缓存量，按未缓存估算；写入期限不明时按 30 分钟估算。历史记录按核验日价格回算，价格可能变化；支持长上下文计价的模型在超过 272,000 输入 Token 时按官方长上下文单价计算。未收录价格的模型需填写官方单价；加速模式、多模态和工具调用可能另有价格。</p>
+          <form id="usagePriceForm"><label>模型 ID <input id="priceModel" class="text-field" required maxlength="256" placeholder="例如 vendor/model"></label>
+            <label>输入单价 / 百万 Token <input id="priceInput" type="number" min="0" max="1000000000" step="any" required></label>
+            <label>输出单价 / 百万 Token <input id="priceOutput" type="number" min="0" max="1000000000" step="any" required></label>
+            <label>币种 <input id="priceCurrency" maxlength="3" minlength="3" pattern="[A-Z]{3}" value="USD" required></label>
+            <button class="btn outline" type="submit">保存单价</button><button class="btn outline" id="priceDelete" type="button">移除单价</button>
+          </form><p id="usagePrices"></p>
+        </section>
+      </div>
       <div id="tab-overview" class="tab-panel" role="tabpanel" aria-labelledby="nav-overview">
       <section class="hero">
         <div class="hero-text"><div class="eyebrow"><span class="spark"></span> SELF-HOSTED CONTROL PLANE · 0.2 DEV PREVIEW</div><h1>连接模型，<br><em>让 Agent 专注执行。</em></h1>

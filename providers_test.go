@@ -136,6 +136,102 @@ func TestProviderCatalogAndRouting(t *testing.T) {
 	}
 }
 
+func TestStartupInferenceWaitsForSIWCCatalog(t *testing.T) {
+	store, err := newStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testCreateAgentKey(t, store)
+	err = store.saveCredential(&Credential{AccessToken: "fixture", Scopes: requiredScope, ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.upsertProvider(ExternalProvider{ID: "vendor", Name: "Vendor", Kind: "openai-compatible", BaseURL: "https://api.example.org/v1", APIKey: "fixture", Enabled: true, ManualModels: []string{"gpt-6.1-terra"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	app := newServer(newAuth(store))
+	app.auth.client = &http.Client{Transport: mockRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/models") {
+			return testResponse(200, "application/json", `{"models":[{"slug":"gpt-6.1-terra","visibility":"list"}]}`), nil
+		}
+		return testResponse(200, "text/event-stream", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture\",\"status\":\"completed\",\"output\":[]}}\n\n"), nil
+	})}
+	app.client = app.auth.client
+	app.router.client = &http.Client{Transport: mockRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, "/models") {
+			t.Error("SIWC 目录尚未准备好时调用了其他供应商")
+		}
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		app.router.Refresh(ctx)
+	}()
+	defer func() { cancel(); <-finished }()
+	for _, model := range []string{"gpt-6.1-terra", "siwc/gpt-6.1-terra"} {
+		body := strings.NewReader(`{"model":"` + model + `","input":"fixture"}`)
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8087/v1/responses", body).WithContext(ctx)
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("Authorization", "Bearer "+store.get().LocalKey)
+		result := httptest.NewRecorder()
+		app.APIHandler().ServeHTTP(result, req)
+		if result.Code != http.StatusOK || !strings.Contains(result.Body.String(), `"id":"fixture"`) {
+			t.Fatalf("启动后请求 %s 未走 SIWC: %d %s", model, result.Code, result.Body.String())
+		}
+	}
+	select {
+	case <-finished:
+		t.Fatal("SIWC 请求等待了无关的外部目录")
+	default:
+	}
+}
+
+func TestUnavailableSIWCCatalogReturnsRetryableError(t *testing.T) {
+	store, err := newStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testCreateAgentKey(t, store)
+	if err := store.saveCredential(&Credential{AccessToken: "fixture", Scopes: requiredScope, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	app := newServer(newAuth(store))
+	var fetches int
+	app.auth.client = &http.Client{Transport: mockRoundTrip(func(req *http.Request) (*http.Response, error) {
+		fetches++
+		if fetches == 1 {
+			return testResponse(http.StatusServiceUnavailable, "application/json", `{}`), nil
+		}
+		return testResponse(http.StatusOK, "application/json", `{"models":[]}`), nil
+	})}
+	call := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8087/v1/responses", strings.NewReader(`{"model":"gpt-6.1-terra","input":"fixture"}`))
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("Authorization", "Bearer "+store.get().LocalKey)
+		result := httptest.NewRecorder()
+		app.APIHandler().ServeHTTP(result, req)
+		return result
+	}
+	for i := 0; i < 2; i++ {
+		result := call()
+		if result.Code != http.StatusServiceUnavailable || result.Header().Get("Retry-After") == "" || !strings.Contains(result.Body.String(), "model_catalog_unavailable") {
+			t.Fatalf("目录暂时不可用时应返回可重试的 503: %d %s", result.Code, result.Body.String())
+		}
+	}
+	if fetches != 1 {
+		t.Fatalf("冷却期内目录请求不应重复发起，实际 %d 次", fetches)
+	}
+	app.router.Refresh(context.Background())
+	if result := call(); result.Code != http.StatusNotFound || !strings.Contains(result.Body.String(), "model_not_found") {
+		t.Fatalf("目录正常但确实没有模型时应返回 404: %d %s", result.Code, result.Body.String())
+	}
+}
+
 func TestExternalInferenceKeyAndModelRewrite(t *testing.T) {
 	s, err := newStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

@@ -94,6 +94,8 @@ func (s *Server) routeImages(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider_required", "Images require an external provider/model ID, for example openai-api/gpt-image-2.5-sunburst; SIWC images are unsupported")
 		return
 	}
+	w, finishUsage := s.observeUsage(w, req, model)
+	defer finishUsage()
 	provider, upstreamModel, err := s.router.Resolve(model)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model_not_found", err.Error())

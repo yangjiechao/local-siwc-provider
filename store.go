@@ -39,6 +39,8 @@ type State struct {
 	Credential *Credential        `json:"credential,omitempty"`
 	Providers  []ExternalProvider `json:"providers,omitempty"`
 	AgentKeys  []AgentKey         `json:"agent_keys,omitempty"`
+	UsagePrices map[string]usagePrice `json:"usage_prices,omitempty"`
+	UsageStarted *time.Time `json:"usage_started,omitempty"`
 	// Each missing entry is enabled by default. Keys are "siwc" or provider ID.
 	// Disabled IDs survive catalog refreshes and application restarts.
 	DisabledModels map[string][]string `json:"disabled_models,omitempty"`
@@ -203,6 +205,12 @@ func (s *Store) get() State {
 	defer s.mu.Unlock()
 	v := s.state
 	v.AgentKeys = append([]AgentKey(nil), v.AgentKeys...)
+	if v.UsageStarted != nil { started := *v.UsageStarted; v.UsageStarted = &started }
+	if v.UsagePrices != nil {
+		prices := make(map[string]usagePrice, len(v.UsagePrices))
+		for model, price := range v.UsagePrices { prices[model] = price }
+		v.UsagePrices = prices
+	}
 	if v.Credential != nil {
 		c := *v.Credential
 		v.Credential = &c

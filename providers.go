@@ -74,6 +74,8 @@ type Router struct {
 	mu        sync.RWMutex
 	refreshMu sync.Mutex
 	snap      modelSnapshot
+	ownCatalogLoad chan struct{}
+	ownCatalogRetryAt time.Time
 }
 
 func newRouter(a *Auth) *Router {
@@ -278,6 +280,60 @@ func (r *Router) refreshOwn(ctx context.Context) ([]string, error) {
 	return models, nil
 }
 
+const ownCatalogRetryDelay = 3 * time.Second
+
+var errSIWCCatalogUnavailable = errors.New("SIWC model catalog is temporarily unavailable; retry shortly")
+
+func (r *Router) waitForOwnCatalog(ctx context.Context, refresh bool) error {
+	r.mu.Lock()
+	if !refresh && r.snap.ownOK {
+		r.mu.Unlock()
+		return nil
+	}
+	if r.ownCatalogLoad == nil {
+		if !refresh && time.Now().Before(r.ownCatalogRetryAt) {
+			r.mu.Unlock()
+			return errSIWCCatalogUnavailable
+		}
+		r.ownCatalogLoad = make(chan struct{})
+		go r.loadOwnCatalog()
+	}
+	done := r.ownCatalogLoad
+	r.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return errSIWCCatalogUnavailable
+	case <-done:
+		r.mu.RLock()
+		ready := r.snap.ownOK
+		r.mu.RUnlock()
+		if !ready {
+			return errSIWCCatalogUnavailable
+		}
+		return nil
+	}
+}
+
+func (r *Router) loadOwnCatalog() {
+	// 并发请求共用一次目录加载，单个客户端取消时只退出自己的等待。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	models, err := r.refreshOwn(ctx)
+	if r.store.get().Credential == nil {
+		models, err = nil, errors.New("SIWC not signed in")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snap.own, r.snap.ownOK, r.snap.ownError = models, err == nil, ""
+	r.ownCatalogRetryAt = time.Time{}
+	if err != nil {
+		r.snap.ownError = err.Error()
+		r.ownCatalogRetryAt = time.Now().Add(ownCatalogRetryDelay)
+	}
+	close(r.ownCatalogLoad)
+	r.ownCatalogLoad = nil
+}
+
 func (r *Router) Refresh(ctx context.Context) {
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
@@ -285,25 +341,11 @@ func (r *Router) Refresh(ctx context.Context) {
 	snap := modelSnapshot{providers: map[string][]string{}, errs: map[string]string{}, refreshed: map[string]time.Time{}}
 	var wg sync.WaitGroup
 	var dataMu sync.Mutex
-	if state.Credential != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ctxOwn, cancel := context.WithTimeout(ctx, 30*time.Second)
-			models, err := r.refreshOwn(ctxOwn)
-			cancel()
-			dataMu.Lock()
-			defer dataMu.Unlock()
-			if err != nil {
-				snap.ownError = err.Error()
-			} else {
-				snap.ownOK = true
-				snap.own = models
-			}
-		}()
-	} else {
-		snap.ownError = "SIWC not signed in"
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = r.waitForOwnCatalog(ctx, true)
+	}()
 	for _, provider := range state.Providers {
 		p := provider
 		if !p.Enabled {
@@ -326,7 +368,8 @@ func (r *Router) Refresh(ctx context.Context) {
 	}
 	wg.Wait()
 	r.mu.Lock()
-	r.snap = snap
+	// SIWC 加载完成就可用于路由，无需等待其他供应商目录。
+	r.snap.providers, r.snap.errs, r.snap.refreshed = snap.providers, snap.errs, snap.refreshed
 	r.mu.Unlock()
 }
 
@@ -387,8 +430,11 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 	defer r.mu.RUnlock()
 	if strings.HasPrefix(model, "siwc/") {
 		real := strings.TrimPrefix(model, "siwc/")
+		if state.Credential == nil {
+			return nil, "", errors.New("SIWC not signed in")
+		}
 		if !s.ownOK {
-			return nil, "", errors.New("SIWC catalog unavailable; refresh models")
+			return nil, "", errSIWCCatalogUnavailable
 		}
 		for _, x := range s.own {
 			if x == real {
@@ -416,7 +462,7 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 	}
 	if state.Credential != nil {
 		if !s.ownOK {
-			return nil, "", errors.New("SIWC model catalog unavailable; refresh before using unprefixed models")
+			return nil, "", errSIWCCatalogUnavailable
 		}
 		for _, x := range s.own {
 			if model == x && !modelDisabled(state, "siwc", model) {
@@ -436,6 +482,22 @@ func (r *Router) Resolve(model string) (*ExternalProvider, string, error) {
 		}
 	}
 	return nil, "", errors.New("unknown model: refresh catalog or add it to a provider's manual models")
+}
+
+func (r *Router) resolveForRequest(ctx context.Context, model string) (*ExternalProvider, string, error) {
+	provider, actual, err := r.Resolve(model)
+	if !errors.Is(err, errSIWCCatalogUnavailable) {
+		return provider, actual, err
+	}
+	if err = r.waitForOwnCatalog(ctx, false); err != nil {
+		return nil, "", err
+	}
+	return r.Resolve(model)
+}
+
+func writeModelCatalogUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", fmt.Sprint(int(ownCatalogRetryDelay/time.Second)))
+	writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", errSIWCCatalogUnavailable.Error())
 }
 
 // clientFor enforces separate, pinned-network transports for public cloud and
@@ -505,7 +567,15 @@ func (s *Server) routedModels(w http.ResponseWriter, req *http.Request) {
 		s.models(w, req)
 		return
 	}
+	var catalogErr error
+	if s.auth.store.get().Credential != nil {
+		catalogErr = s.router.waitForOwnCatalog(req.Context(), false)
+	}
 	entries := s.router.Models()
+	if catalogErr != nil && len(entries) == 0 {
+		writeModelCatalogUnavailable(w)
+		return
+	}
 	data := make([]any, 0, len(entries))
 	for _, e := range entries {
 		data = append(data, map[string]any{"id": e.ID, "object": "model", "created": 0, "owned_by": e.Provider})
@@ -537,11 +607,27 @@ func (s *Server) routeInference(w http.ResponseWriter, req *http.Request, route 
 		writeError(w, 400, "invalid_request", "model required")
 		return
 	}
-	provider, actual, err := s.router.Resolve(model)
+	provider, actual, err := s.router.resolveForRequest(req.Context(), model)
 	if err != nil {
-		writeError(w, 404, "model_not_found", err.Error())
+		status := http.StatusNotFound
+		if errors.Is(err, errSIWCCatalogUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		if s.usage != nil {
+			key, name := s.usageKey(strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+			s.usage.append(usageRecord{Time: time.Now().UTC(), Key: key, KeyName: name, Model: model, Status: status})
+		}
+		if status == http.StatusServiceUnavailable {
+			writeModelCatalogUnavailable(w)
+		} else {
+			writeError(w, status, "model_not_found", err.Error())
+		}
 		return
 	}
+	resolvedModel := "siwc/" + actual
+	if provider != nil { resolvedModel = provider.ID + "/" + actual }
+	w, finishUsage := s.observeUsage(w, req, resolvedModel)
+	defer finishUsage()
 	// Record only request metadata. The raw input and credentials never leave this handler.
 	if s.diagnostics != nil {
 		providerID := "siwc"
@@ -609,6 +695,10 @@ func (s *Server) routeVideoTask(w http.ResponseWriter, req *http.Request) {
 			writeError(w, 400, "unsupported_capability", "model is not a video provider")
 			return
 		}
+		providerURL, _ := url.Parse(p.BaseURL)
+		official := providerURL != nil && providerURL.Hostname() == "ark.cn-beijing.volces.com"
+		w, finishUsage := s.observeVideoSubmission(w, req, p.ID+"/"+actual, p.ID, official)
+		defer finishUsage()
 		v["model"] = actual
 		data, _ := json.Marshal(v)
 		s.router.proxyExternalTo(w, req, *p, data, strings.TrimRight(p.BaseURL, "/")+"/contents/generations/tasks")
@@ -633,7 +723,13 @@ func (s *Server) routeVideoTask(w http.ResponseWriter, req *http.Request) {
 			writeError(w, 400, "invalid_request", "valid video provider query required")
 			return
 		}
-		s.router.proxyExternalTo(w, req, *chosen, nil, strings.TrimRight(chosen.BaseURL, "/")+"/contents/generations/tasks/"+url.PathEscape(id))
+		observer := &usageWriter{ResponseWriter:w}
+		s.router.proxyExternalTo(observer, req, *chosen, nil, strings.TrimRight(chosen.BaseURL, "/")+"/contents/generations/tasks/"+url.PathEscape(id))
+		if s.usage != nil && observer.status>=200 && observer.status<300 && !observer.failed {
+			providerURL, _ := url.Parse(chosen.BaseURL)
+			official := providerURL != nil && providerURL.Hostname() == "ark.cn-beijing.volces.com"
+			s.usage.completeVideo(usageTaskRef(chosen.ID,id),id,observer.buf,official)
+		}
 		return
 	}
 	writeError(w, 404, "not_found", "video task endpoint not found")

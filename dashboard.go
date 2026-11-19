@@ -54,6 +54,8 @@ func (d *Dashboard) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/api/session/logout", d.authorized(d.endSession))
 	mux.HandleFunc("GET /ui/api/status", d.authorized(d.status))
 	mux.HandleFunc("GET /ui/api/diagnostics", d.authorized(d.requestDiagnosticsHandler))
+	mux.HandleFunc("GET /ui/api/usage", d.authorized(d.usageHandler))
+	mux.HandleFunc("POST /ui/api/usage/price", d.authorized(d.usagePriceHandler))
 	mux.HandleFunc("POST /ui/api/login", d.authorized(d.startLogin))
 	mux.HandleFunc("POST /ui/api/logout", d.authorized(d.logout))
 	mux.HandleFunc("POST /ui/api/service", d.authorized(d.setService))
